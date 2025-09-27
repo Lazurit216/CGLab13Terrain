@@ -38,20 +38,24 @@ struct PassConstants
     // are spot lights for a maximum of MaxLights per object.
     Light Lights[MaxLights];
 
-    float gTessFactorMin = 1.f; // Минимальный фактор тесселяции ребер
-    float gTessFactorMax = 10.f; // Максимальный фактор тесселяции ребер
-    int gTessLevel = 1; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
-    float gMaxTessDistance = 100.f; // Расстояние, на котором достигается мин. тесселяция
-    float gDisplacementScale = 1.f; // Масштаб смещения
-    int fixTessLevel = true;
-    float DecalRadius = 2;         // 4 байта (Итого 16 байт)
-    float DecalFalloffRadius = 6;  // 4 байта (Начинается с 16 байт)
-    float DecalPadding;        // 4 байта (Начинается с 20 байт - чтобы выровнять?)
-    DirectX::XMFLOAT3 decalPosition = { 0,0,0 };
-    DirectX::XMFLOAT4X4 DecalViewProj;
-    DirectX::XMFLOAT4X4 DecalTexTransform;
-    float DecalPadding1;
-    int isDecalVisible;
+    //float gTessFactorMin = 1.f; // Минимальный фактор тесселяции ребер
+    //float gTessFactorMax = 10.f; // Максимальный фактор тесселяции ребер
+    //int gTessLevel = 1; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
+    //float gMaxTessDistance = 100.f; // Расстояние, на котором достигается мин. тесселяция
+    //float gDisplacementScale = 1.f; // Масштаб смещения
+    //int fixTessLevel = true;
+    //float DecalRadius = 2;         // 4 байта (Итого 16 байт)
+    //float DecalFalloffRadius = 6;  // 4 байта (Начинается с 16 байт)
+    //float DecalPadding;        // 4 байта (Начинается с 20 байт - чтобы выровнять?)
+    //DirectX::XMFLOAT3 decalPosition = { 0,0,0 };
+    //DirectX::XMFLOAT4X4 DecalViewProj;
+    //DirectX::XMFLOAT4X4 DecalTexTransform;
+    //float DecalPadding1;
+    //int isDecalVisible;
+
+
+    float gScale = 1.f;
+    float gTessellationFactor = 1.f;
 };
 
 //struct Vertex

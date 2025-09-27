@@ -35,8 +35,6 @@ struct RenderItem
 
 	XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 
-	float g_Scale = 1.f;
-	float g_TessellationFactor = 1.f;
 
 	// Dirty flag indicating the object data has changed and we need to update the constant buffer.
 	// Because we have an object cbuffer for each FrameResource, we have to apply the
@@ -100,11 +98,6 @@ private:
 	void InitImGui();
 	void SetupImGui();
 
-	bool mDecalVisible = false; // Флаг видимости декали
-
-	// Метод для ray casting
-	bool ScreenToWorld(int screenX, int screenY, XMFLOAT3& worldPos);
-
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
 private:
@@ -150,6 +143,9 @@ private:
 	POINT mLastMousePos;
 
 	bool isFillModeSolid = true;
+
+	float mScale = 1.f;
+	float mTessellationFactor = 1.f;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -298,7 +294,23 @@ void TexColumnsApp::SetupImGui()
 	ImGui::NewFrame();
 	ImGui::Begin("Settings");
 
-	ImGui::SetWindowSize(ImVec2(500, 800)); // Ширина, Высота
+	ImGui::Text("Polygon Fill Mode:");
+
+	if (ImGui::RadioButton("Solid", isFillModeSolid)) isFillModeSolid = true;
+	ImGui::SameLine();
+	if (ImGui::RadioButton("Wireframe", !isFillModeSolid)) isFillModeSolid = false;
+
+	ImGui::Separator();
+
+	ImGui::Text("Tesselation:");
+	ImGui::Text("Scale:");
+	ImGui::DragFloat("##Scale", &mScale, 0.1f, 0.0f, 10, "%.3f");
+	ImGui::Text("Tessellation Factor:");
+	ImGui::DragFloat("##TessFactor", &mTessellationFactor, 1.f, 1.f, 32, "%.1f");
+
+	ImGui::Separator();
+
+	ImGui::SetWindowSize(ImVec2(300, 500)); // Ширина, Высота
 	ImGui::SetWindowPos(ImVec2(5, 5));   // X, Y позиция
 
 	ImGui::End();
@@ -321,7 +333,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
 	}
 	else
-		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
+		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["wireframe"].Get()));
 
 
 	mCommandList->RSSetViewports(1, &mScreenViewport);
@@ -389,152 +401,14 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 
 }
 
-
-
-
-bool TexColumnsApp::ScreenToWorld(int screenX, int screenY, XMFLOAT3& worldPos)
-{
-	// Детальный отладочный вывод
-	OutputDebugStringA("=== ScreenToWorld Debug ===\n");
-
-	std::string debugMsg = "Input: screenX=" + std::to_string(screenX) +
-		", screenY=" + std::to_string(screenY) +
-		", mClientWidth=" + std::to_string(mClientWidth) +
-		", mClientHeight=" + std::to_string(mClientHeight) + "\n";
-	OutputDebugStringA(debugMsg.c_str());
-
-	// 1. Нормализованные координаты экрана [-1, 1]
-	float nx = (2.0f * static_cast<float>(screenX)) / mClientWidth - 1.0f;
-	float ny = 1.0f - (2.0f * static_cast<float>(screenY)) / mClientHeight;
-
-	debugMsg = "Normalized: nx=" + std::to_string(nx) + ", ny=" + std::to_string(ny) + "\n";
-	OutputDebugStringA(debugMsg.c_str());
-
-	// 2. Создаем луч в clip space
-	XMVECTOR rayStart = XMVectorSet(nx, ny, 0.0f, 1.0f);
-	XMVECTOR rayEnd = XMVectorSet(nx, ny, 1.0f, 1.0f);
-
-	// 3. Получаем обратную матрицу ViewProj
-	XMMATRIX view = XMLoadFloat4x4(&mView);
-	XMMATRIX proj = XMLoadFloat4x4(&mProj);
-	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
-	XMMATRIX invViewProj = XMMatrixInverse(nullptr, viewProj);
-
-	// Отладочный вывод матриц
-	XMFLOAT4X4 viewProjMatrix;
-	XMStoreFloat4x4(&viewProjMatrix, viewProj);
-
-	debugMsg = "ViewProj Matrix:\n";
-	for (int i = 0; i < 4; i++) {
-		debugMsg += "[" + std::to_string(viewProjMatrix.m[i][0]) + ", " +
-			std::to_string(viewProjMatrix.m[i][1]) + ", " +
-			std::to_string(viewProjMatrix.m[i][2]) + ", " +
-			std::to_string(viewProjMatrix.m[i][3]) + "]\n";
-	}
-	OutputDebugStringA(debugMsg.c_str());
-
-	// 4. Преобразуем в мировые координаты
-	rayStart = XMVector3TransformCoord(rayStart, invViewProj);
-	rayEnd = XMVector3TransformCoord(rayEnd, invViewProj);
-
-	XMFLOAT3 startPos, endPos;
-	XMStoreFloat3(&startPos, rayStart);
-	XMStoreFloat3(&endPos, rayEnd);
-
-	debugMsg = "World ray start: X=" + std::to_string(startPos.x) +
-		", Y=" + std::to_string(startPos.y) +
-		", Z=" + std::to_string(startPos.z) + "\n";
-	OutputDebugStringA(debugMsg.c_str());
-
-	debugMsg = "World ray end: X=" + std::to_string(endPos.x) +
-		", Y=" + std::to_string(endPos.y) +
-		", Z=" + std::to_string(endPos.z) + "\n";
-	OutputDebugStringA(debugMsg.c_str());
-
-	// 5. Направление луча
-	XMVECTOR rayDir = XMVectorSubtract(rayEnd, rayStart);
-	rayDir = XMVector3Normalize(rayDir);
-
-	// 6. Intersection с плоскостью Y=0
-	XMVECTOR planeNormal = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-	XMVECTOR planePoint = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
-
-	// Формула: t = dot(planePoint - rayStart, planeNormal) / dot(rayDir, planeNormal)
-	XMVECTOR diff = XMVectorSubtract(planePoint, rayStart);
-	float numerator = XMVectorGetX(XMVector3Dot(diff, planeNormal));
-	float denominator = XMVectorGetX(XMVector3Dot(rayDir, planeNormal));
-
-	debugMsg = "Intersection calc: numerator=" + std::to_string(numerator) +
-		", denominator=" + std::to_string(denominator) + "\n";
-	OutputDebugStringA(debugMsg.c_str());
-
-	if (fabs(denominator) < 1e-6f) {
-		OutputDebugStringA("MISS: Ray parallel to plane\n");
-		return false;
-	}
-
-	float t = numerator / denominator;
-	debugMsg = "Intersection t=" + std::to_string(t) + "\n";
-	OutputDebugStringA(debugMsg.c_str());
-
-	if (t >= 0.0f) {
-		XMVECTOR intersection = XMVectorAdd(rayStart, XMVectorScale(rayDir, t));
-		XMFLOAT3 intersectPos;
-		XMStoreFloat3(&intersectPos, intersection);
-
-		debugMsg = "Intersection point: X=" + std::to_string(intersectPos.x) +
-			", Y=" + std::to_string(intersectPos.y) +
-			", Z=" + std::to_string(intersectPos.z) + "\n";
-		OutputDebugStringA(debugMsg.c_str());
-
-		// Проверяем границы grid (10x10)
-		if (intersectPos.x >= -5.0f && intersectPos.x <= 5.0f &&
-			intersectPos.z >= -5.0f && intersectPos.z <= 5.0f) {
-			worldPos = intersectPos;
-			OutputDebugStringA("HIT: Valid intersection found\n");
-			return true;
-		}
-		else {
-			debugMsg = "MISS: Outside grid bounds. X=" + std::to_string(intersectPos.x) +
-				", Z=" + std::to_string(intersectPos.z) + "\n";
-			OutputDebugStringA(debugMsg.c_str());
-		}
-	}
-	else {
-		OutputDebugStringA("MISS: Intersection behind camera\n");
-	}
-
-	return false;
-}
 void TexColumnsApp::OnMouseDown(WPARAM btnState, int x, int y)
 {
 	mLastMousePos.x = x;
 	mLastMousePos.y = y;
 
-	// Левый клик - установка декали
 	if ((btnState & MK_LBUTTON) != 0)
 	{
-		XMFLOAT3 worldPos;
-		if (ScreenToWorld(x, y, worldPos))
-		{
-			// Успешное попадание на plane
-			mMainPassCB.decalPosition = worldPos;
-			mDecalVisible = true;
-
-			// Отладочный вывод выбранной позиции
-			std::string debugMsg = "Decal placed at: X=" +
-				std::to_string(worldPos.x) +
-				", Y=" + std::to_string(worldPos.y) +
-				", Z=" + std::to_string(worldPos.z) +
-				"\n";
-			OutputDebugStringA(debugMsg.c_str());
-		}
-		else
-		{
-			// Клик мимо plane - скрываем декаль
-			mDecalVisible = false;
-			OutputDebugStringA("Decal hidden: click missed the plane\n");
-		}
+		//do left click
 	}
 
 	SetCapture(mhMainWnd);
@@ -573,31 +447,6 @@ void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 
 			// Restrict the radius.
 			mRadius = MathHelper::Clamp(mRadius, 5.0f, 150.0f);
-
-			//const float minRadius = 5.0f;
-			//const float maxRadius = 150.0f;
-			//const float minTess = 1.0f;
-			//const float maxTess = 10.0f;
-
-			//// Ступенчатая функция для оптимизации
-			//float tessellationFactor;
-			//if (mRadius < 20.0f) tessellationFactor = 32.0f;
-			//else if (mRadius < 30.0f) tessellationFactor = 10;
-			//else if (mRadius < 60.0f) tessellationFactor = 5.0f;
-			//else tessellationFactor = 1.0f;
-
-			//// Устанавливаем tessellation factor для всех render items
-			//for (auto& item : mAllRitems)
-			//{
-			//	item->g_TessellationFactor = tessellationFactor;
-			//}
-
-
-			//
-
-			//// Debug output
-			//OutputDebugStringA(("Camera Radius: " + std::to_string(mRadius) +
-			//	", Tessellation Factor: " + std::to_string(tessellationFactor) + "\n").c_str());
 		}
 
 		mLastMousePos.x = x;
@@ -647,16 +496,11 @@ void TexColumnsApp::UpdateObjectCBs(const GameTimer& gt)
 		{
 			XMMATRIX world = XMLoadFloat4x4(&e->World);
 			XMMATRIX texTransform = XMLoadFloat4x4(&e->TexTransform);
-			//float* g_Scale = &e->g_Scale;
-			//float* g_TessellationFactor = &e->g_TessellationFactor;
-
 
 
 			ObjectConstants objConstants;
 			XMStoreFloat4x4(&objConstants.World, XMMatrixTranspose(world));
 			XMStoreFloat4x4(&objConstants.TexTransform, XMMatrixTranspose(texTransform));
-			objConstants.g_Scale = e->g_Scale;
-			objConstants.g_TessellationFactor = e->g_TessellationFactor;
 
 
 			currObjectCB->CopyData(e->ObjCBIndex, objConstants);
@@ -732,35 +576,8 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.Lights[2].Direction = { 0.0f, -0.707f, -0.707f };
 	mMainPassCB.Lights[2].Strength = { 0.2f, 0.2f, 0.2f };
 
-	/*mMainPassCB.DecalRadius = 1.0f;
-	mMainPassCB.DecalFalloffRadius = 2.3f;
-	mMainPassCB.decalPosition = { .0f, .0f, .0f }; // Позиция декали*/
-
-	// Устанавливаем радиусы декали только если она видима
-
-	mMainPassCB.isDecalVisible = mDecalVisible? 1: 0;
-	//OutputDebugStringA(("Decal visible: " + std::string(mDecalVisible ? "true" : "false") + "\n").c_str());
-	
-	mMainPassCB.DecalRadius = 1.0f;
-	mMainPassCB.DecalFalloffRadius = 1.7f;
-
-
-	XMVECTOR decalPos = XMLoadFloat3(&mMainPassCB.decalPosition);
-	float scale = 3.5;
-	XMVECTOR decalCamPos = decalPos + XMVectorSet(0.0f, 1.5f, 0.0f, 0.0f); // Смещаем вверх
-	XMVECTOR target = decalPos;
-	XMVECTOR up = XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f); // Направление "вверх" для проектора (ось Z)
-
-	XMMATRIX decalView = XMMatrixLookAtLH(decalCamPos, target, up);
-	// Ортографическая проекция размером DecalSize x DecalSize, глубина DecalSize
-	XMMATRIX decalProj = XMMatrixOrthographicLH(scale, scale, 0.0f, 1); // Near=0, Far=DecalSize
-
-	// Транспонируем перед отправкой в константный буфер
-	XMStoreFloat4x4(&mMainPassCB.DecalViewProj, XMMatrixTranspose(decalView * decalProj));
-	// --- Конец расчета матрицы ---
-	XMMATRIX decalTexTransform = XMMatrixScaling(0.5f, -0.5f, 1.0f) *
-		XMMatrixTranslation(0.5f, 0.5f, 0.0f);
-	XMStoreFloat4x4(&mMainPassCB.DecalTexTransform, XMMatrixTranspose(decalTexTransform));
+	mMainPassCB.gScale = mScale;
+	mMainPassCB.gTessellationFactor = mTessellationFactor;
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
@@ -1109,6 +926,50 @@ void TexColumnsApp::BuildPSOs()
 	opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePsoDesc.DSVFormat = mDepthStencilFormat;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
+
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC wireframePsoDesc;
+
+	//
+	// PSO for opaque objects.
+	//
+	ZeroMemory(&wireframePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+	wireframePsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
+	wireframePsoDesc.pRootSignature = mRootSignature.Get();
+	wireframePsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()),
+		mShaders["standardVS"]->GetBufferSize()
+	};
+	wireframePsoDesc.HS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["opaqueHS"]->GetBufferPointer()),
+		mShaders["opaqueHS"]->GetBufferSize()
+	};
+	wireframePsoDesc.DS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["opaqueDS"]->GetBufferPointer()),
+		mShaders["opaqueDS"]->GetBufferSize()
+	};
+	wireframePsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
+		mShaders["opaquePS"]->GetBufferSize()
+	};
+	wireframePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+
+	wireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME; //wire solid
+
+	wireframePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	wireframePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	wireframePsoDesc.SampleMask = UINT_MAX;
+	wireframePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
+	wireframePsoDesc.NumRenderTargets = 1;
+	wireframePsoDesc.RTVFormats[0] = mBackBufferFormat;
+	wireframePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
+	wireframePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+	wireframePsoDesc.DSVFormat = mDepthStencilFormat;
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&wireframePsoDesc, IID_PPV_ARGS(&mPSOs["wireframe"])));
 }
 
 void TexColumnsApp::BuildFrameResources()

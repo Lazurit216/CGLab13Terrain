@@ -31,8 +31,6 @@ cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
     float4x4 gTexTransform;
-    float g_TessellationFactor;
-    float g_Scale;
 };
 
 // Constant data that varies per material.
@@ -64,20 +62,8 @@ cbuffer cbPass : register(b2)
     float4 gAmbientLight;
     Light gLights[MaxLights];
     
-    float gTessFactorMin; // Минимальный фактор тесселяции ребер
-    float gTessFactorMax; // Максимальный фактор тесселяции ребер
-    int gTessLevel; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
-    float gMaxTessDistance; // Расстояние, на котором достигается мин. тесселяция
-    float gDisplacementScale; // Масштаб смещения
-    int fixTessLevel;
-    float DecalRadius; // 4 байта (Итого 16 байт)
-    float DecalFalloffRadius; // 4 байта (Начинается с 16 байт)
-    float DecalPadding; // 4 байта (Начинается с 20 байт - чтобы выровнять?)
-    float3 decalPosition;
-    float4x4 decalViewProj;
-    float4x4 DecalTexTransform;
-    float DecalPadding1; // 4 байта (Начинается с 20 байт - чтобы выровнять?)
-    int isDecalVisible;
+    float gScale;
+    float gTessellationFactor;
 };
 
 SamplerState gsamPointWrap : register(s0);
@@ -141,7 +127,7 @@ HS_CONSTANT_DATA_OUTPUT ConstantsHS(InputPatch<VertexOut, 3> p, uint PatchID : S
     float distanceToCamera = distance(patchCenter, gEyePosW);
     
     // Базовый фактор тесселяции из константного буфера
-    float baseTessFactor = g_TessellationFactor;
+    float baseTessFactor = gTessellationFactor;
     
     // Динамический множитель на основе расстояния
     // Чем дальше от камеры, тем меньше тесселяция
@@ -167,12 +153,6 @@ HS_CONSTANT_DATA_OUTPUT ConstantsHS(InputPatch<VertexOut, 3> p, uint PatchID : S
     Out.Edges[1] = finalTessFactor;
     Out.Edges[2] = finalTessFactor;
     Out.Inside = finalTessFactor;
-    
-    // Отладочный вывод (раскомментировать для проверки)
-    //if (PatchID == 0) {
-    //printf(distanceToCamera, baseTessFactor, distanceMultiplier, finalTessFactor);
-                //distanceToCamera, baseTessFactor, distanceMultiplier, finalTessFactor);
-    //}
     
     return Out;
 }
@@ -216,7 +196,6 @@ struct DS_OUTPUT
     float2 TexC : TEXCOORD0; // Текстурные координаты
     float2 decalUV : TEXCOORD1; // Текстурные координаты
     float3 TanW : TANGENT; // Касательная в мире (для normal mapping)
-    bool isInDecal : ISINDECAL;
 };
 
 [domain("tri")]
@@ -231,40 +210,13 @@ DS_OUTPUT DS(HS_CONSTANT_DATA_OUTPUT input,
     dout.NormalW = domainLoc.x * patch[0].NormalW + domainLoc.y * patch[1].NormalW + domainLoc.z * patch[2].NormalW;
     dout.TexC = domainLoc.x * patch[0].TexC + domainLoc.y * patch[1].TexC + domainLoc.z * patch[2].TexC;
     dout.TanW = domainLoc.x * patch[0].TanW + domainLoc.y * patch[1].TanW + domainLoc.z * patch[2].TanW;
-    // --- 2. Вычисляем влияние декали НА ЭТУ ВЕРШИНУ ---
-    float distToDecalCenter = distance(dout.PosW, decalPosition);
-    float decalInfluence = smoothstep(DecalFalloffRadius, DecalRadius, distToDecalCenter);
-     // --- 3. Применяем смещение, если есть влияние декали ---
-    float finalDisplacementOffset = 0.0f; // По умолчанию смещения нет
     
     float3 unitNormalW = normalize(dout.NormalW);
     dout.TanW = normalize(dout.TanW);
     
-    if (decalInfluence > 0.0f && isDecalVisible==1)
-    {
-        // --- 3a. Вычисляем UV координаты для декали ---
-        float4 decalClipPos = mul(float4(dout.PosW, 1.0f), decalViewProj);
-        decalClipPos.xyz /= (decalClipPos.w + 1e-6f);
-        
-        float4 texTransform = mul(float4(decalClipPos.xy, 0.0f, 1.0f), DecalTexTransform);
-        float2 texC = texTransform.xy;
-        
-        //texC *= .f; // Уменьшает текстуру в 2 раза
-
-        dout.decalUV = texC;
-        float decalDispValue = gDecalDispMap.SampleLevel(gsamLinearClamp, texC, 0.0f).r;
-        
-        finalDisplacementOffset = (decalDispValue - 0.5f) * gDisplacementScale * decalInfluence;
-        dout.PosW += finalDisplacementOffset * dout.NormalW;
-        dout.isInDecal = true;
-    }
-    else
-    {
-        float displacement = gDispMap.SampleLevel(gsamAnisotropicWrap, dout.TexC, 0).r;
-        displacement *= g_Scale;
-        dout.PosW += unitNormalW * displacement;
-        dout.isInDecal = false;
-    }
+    float displacement = gDispMap.SampleLevel(gsamAnisotropicWrap, dout.TexC, 0).r;
+    displacement *= gScale;
+    dout.PosW += unitNormalW * displacement;
     
     // 4. Пересчет нормали/касательной (НЕ ТРЕБУЕТСЯ, так как смещения нет)
     // Нормализуем интерполированные векторы (важно для нормалей и касательных)
@@ -300,17 +252,9 @@ float4 PS(DS_OUTPUT pin) : SV_Target
 {
     float4 diffuseAlbedo;
     float3 normalSample;
-    if (pin.isInDecal && isDecalVisible==1)
-    {
-        diffuseAlbedo = gDecalDiffMap.Sample(gsamAnisotropicWrap, pin.decalUV) * gDiffuseAlbedo;
-        normalSample = gDecalNormMap.Sample(gsamAnisotropicWrap, pin.decalUV).rgb; // Загружаем сэмпл нормали
-    }
-    else
-    {
-        diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
-        normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb; // Загружаем сэмпл нормали
-        
-    }
+    diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+    normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb; // Загружаем сэмпл нормали
+
     if (diffuseAlbedo.r == 1 && diffuseAlbedo.g == 1 && diffuseAlbedo.b == 1)
     {
         diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
