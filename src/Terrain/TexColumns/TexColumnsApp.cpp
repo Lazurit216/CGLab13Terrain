@@ -689,62 +689,26 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 
 void TexColumnsApp::LoadTextures()
 {
-	auto bricksTex = std::make_unique<Texture>();
-	bricksTex->Name = "bricksTex";
-	bricksTex->Filename = L"../../Textures/bricks.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), bricksTex->Filename.c_str(),
-		bricksTex->Resource, bricksTex->UploadHeap));
-
 	auto stoneTex = std::make_unique<Texture>();
 	stoneTex->Name = "stoneTex";
-	stoneTex->Filename = L"../../Textures/stone.dds";
+	stoneTex->Filename = L"../../Textures/terrain_diff.dds";
 	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
 		mCommandList.Get(), stoneTex->Filename.c_str(),
 		stoneTex->Resource, stoneTex->UploadHeap));
 
 	auto stoneTexD = std::make_unique<Texture>();
 	stoneTexD->Name = "stonetDisp";
-	stoneTexD->Filename = L"../../Textures/stone_disp.dds";
+	stoneTexD->Filename = L"../../Textures/terrain_disp.dds";
 	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
 		mCommandList.Get(), stoneTexD->Filename.c_str(),
 		stoneTexD->Resource, stoneTexD->UploadHeap));
 
 	auto stoneTexN = std::make_unique<Texture>();
 	stoneTexN->Name = "stoneNorm";
-	stoneTexN->Filename = L"../../Textures/stone_nmap.dds";
+	stoneTexN->Filename = L"../../Textures/terrain_norm.dds";
 	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
 		mCommandList.Get(), stoneTexN->Filename.c_str(),
 		stoneTexN->Resource, stoneTexN->UploadHeap));
-
-	auto tileTex = std::make_unique<Texture>();
-	tileTex->Name = "tileTex";
-	tileTex->Filename = L"../../Textures/tile.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), tileTex->Filename.c_str(),
-		tileTex->Resource, tileTex->UploadHeap));
-
-	auto forestTex = std::make_unique<Texture>();
-	forestTex->Name = "forestTex";
-	forestTex->Filename = L"../../Textures/forestDif.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), forestTex->Filename.c_str(),
-		forestTex->Resource, forestTex->UploadHeap));
-
-	auto forestTexD = std::make_unique<Texture>();
-	forestTexD->Name = "forestDisp";
-	forestTexD->Filename = L"../../Textures/forestDisp.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), forestTexD->Filename.c_str(),
-		forestTexD->Resource, forestTexD->UploadHeap));
-
-	auto forestTexN = std::make_unique<Texture>();
-	forestTexN->Name = "forestNorm";
-	forestTexN->Filename = L"../../Textures/forestNorm.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), forestTexN->Filename.c_str(),
-		forestTexN->Resource, forestTexN->UploadHeap));
-
 	auto decalTex = std::make_unique<Texture>();
 	decalTex->Name = "decalTex";
 	decalTex->Filename = L"../../Textures/DecalDiff.dds";
@@ -766,17 +730,9 @@ void TexColumnsApp::LoadTextures()
 		mCommandList.Get(), decalTexN->Filename.c_str(),
 		decalTexN->Resource, decalTexN->UploadHeap));
 
-	mTextures[bricksTex->Name] = std::move(bricksTex);
-
 	mTextures[stoneTex->Name] = std::move(stoneTex);
 	mTextures[stoneTexD->Name] = std::move(stoneTexD);
 	mTextures[stoneTexN->Name] = std::move(stoneTexN);
-
-	mTextures[tileTex->Name] = std::move(tileTex);
-
-	mTextures[forestTex->Name] = std::move(forestTex);
-	mTextures[forestTexD->Name] = std::move(forestTexD);
-	mTextures[forestTexN->Name] = std::move(forestTexN);
 
 	mTextures[decalTex->Name] = std::move(decalTex);
 	mTextures[decalTexD->Name] = std::move(decalTexD);
