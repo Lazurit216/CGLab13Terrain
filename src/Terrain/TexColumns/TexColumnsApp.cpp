@@ -84,6 +84,7 @@ private:
 	void UpdateMaterialCBs(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
 
+	void LoadDDSTexture(std::string name, std::wstring filename);
 	void LoadTextures();
 	void BuildRootSignature();
 	void BuildDescriptorHeaps();
@@ -343,7 +344,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
 	// Clear the back buffer and depth buffer.
-	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::LightSteelBlue, 0, nullptr);
+	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
 	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
 	// Specify the buffers we are going to render to.
@@ -574,56 +575,25 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	currPassCB->CopyData(0, mMainPassCB);
 }
 
+void TexColumnsApp::LoadDDSTexture(std::string name, std::wstring filename)
+{
+	auto tex = std::make_unique<Texture>();
+	tex->Filename = filename;
+	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
+		mCommandList.Get(), tex->Filename.c_str(),
+		tex->Resource, tex->UploadHeap));
+	mTextures[name] = std::move(tex);
+}
+
 void TexColumnsApp::LoadTextures()
 {
-	auto stoneTex = std::make_unique<Texture>();
-	stoneTex->Name = "stoneTex";
-	stoneTex->Filename = L"../../Textures/terrain_diff.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), stoneTex->Filename.c_str(),
-		stoneTex->Resource, stoneTex->UploadHeap));
+	LoadDDSTexture("stoneTex", L"../../Textures/stone.dds");
+	LoadDDSTexture("stoneNorm", L"../../Textures/stone_nmap.dds");
+	LoadDDSTexture("stonetDisp", L"../../Textures/stone_disp.dds");
 
-	auto stoneTexD = std::make_unique<Texture>();
-	stoneTexD->Name = "stonetDisp";
-	stoneTexD->Filename = L"../../Textures/terrain_disp.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), stoneTexD->Filename.c_str(),
-		stoneTexD->Resource, stoneTexD->UploadHeap));
-
-	auto stoneTexN = std::make_unique<Texture>();
-	stoneTexN->Name = "stoneNorm";
-	stoneTexN->Filename = L"../../Textures/terrain_norm.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), stoneTexN->Filename.c_str(),
-		stoneTexN->Resource, stoneTexN->UploadHeap));
-	auto decalTex = std::make_unique<Texture>();
-	decalTex->Name = "decalTex";
-	decalTex->Filename = L"../../Textures/DecalDiff.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), decalTex->Filename.c_str(),
-		decalTex->Resource, decalTex->UploadHeap));
-
-	auto decalTexD = std::make_unique<Texture>();
-	decalTexD->Name = "decalDisp";
-	decalTexD->Filename = L"../../Textures/DecalDisp.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), decalTexD->Filename.c_str(),
-		decalTexD->Resource, decalTexD->UploadHeap));
-
-	auto decalTexN = std::make_unique<Texture>();
-	decalTexN->Name = "decalNorm";
-	decalTexN->Filename = L"../../Textures/DecalNorm.dds";
-	ThrowIfFailed(DirectX::CreateDDSTextureFromFile12(md3dDevice.Get(),
-		mCommandList.Get(), decalTexN->Filename.c_str(),
-		decalTexN->Resource, decalTexN->UploadHeap));
-
-	mTextures[stoneTex->Name] = std::move(stoneTex);
-	mTextures[stoneTexD->Name] = std::move(stoneTexD);
-	mTextures[stoneTexN->Name] = std::move(stoneTexN);
-
-	mTextures[decalTex->Name] = std::move(decalTex);
-	mTextures[decalTexD->Name] = std::move(decalTexD);
-	mTextures[decalTexN->Name] = std::move(decalTexN);
+	LoadDDSTexture("terrainDiff", L"../../Textures/terrain_diff.dds");
+	LoadDDSTexture("terrainNorm", L"../../Textures/terrain_norm.dds");
+	LoadDDSTexture("terrainDisp", L"../../Textures/terrain_disp.dds");
 }
 
 void TexColumnsApp::BuildRootSignature()
@@ -637,14 +607,14 @@ void TexColumnsApp::BuildRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE dispMap;
 	dispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Dispmap в регистре t2
 
-	CD3DX12_DESCRIPTOR_RANGE decalDiffuseRange;
-	decalDiffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);  // Диффузная текстура декали в t3
+	CD3DX12_DESCRIPTOR_RANGE TerrainDiffuseRange;
+	TerrainDiffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);  // Terrain diff t3
 
-	CD3DX12_DESCRIPTOR_RANGE decalNormalRange;
-	decalNormalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);  // Нормальная карта декали в t4
+	CD3DX12_DESCRIPTOR_RANGE TerrainNormalRange;
+	TerrainNormalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 4);  // Terrain norm t4
 
-	CD3DX12_DESCRIPTOR_RANGE decalDispMap;
-	decalDispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);  // Dispmap декали в t5
+	CD3DX12_DESCRIPTOR_RANGE TerrainDispMap;
+	TerrainDispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 5);  // Terrain Disp (HeightMap) t5
 
 	// Root parameter can be a table, root descriptor or root constants.
 	CD3DX12_ROOT_PARAMETER slotRootParameter[9];
@@ -653,9 +623,9 @@ void TexColumnsApp::BuildRootSignature()
 	slotRootParameter[0].InitAsDescriptorTable(1, &diffuseRange, D3D12_SHADER_VISIBILITY_ALL);      // t0
 	slotRootParameter[1].InitAsDescriptorTable(1, &normalRange, D3D12_SHADER_VISIBILITY_ALL);       // t1  
 	slotRootParameter[2].InitAsDescriptorTable(1, &dispMap, D3D12_SHADER_VISIBILITY_ALL);           // t2
-	slotRootParameter[3].InitAsDescriptorTable(1, &decalDiffuseRange, D3D12_SHADER_VISIBILITY_ALL); // t3
-	slotRootParameter[4].InitAsDescriptorTable(1, &decalNormalRange, D3D12_SHADER_VISIBILITY_ALL);  // t4
-	slotRootParameter[5].InitAsDescriptorTable(1, &decalDispMap, D3D12_SHADER_VISIBILITY_ALL);      // t5
+	slotRootParameter[3].InitAsDescriptorTable(1, &TerrainDiffuseRange, D3D12_SHADER_VISIBILITY_ALL); // t3
+	slotRootParameter[4].InitAsDescriptorTable(1, &TerrainNormalRange, D3D12_SHADER_VISIBILITY_ALL);  // t4
+	slotRootParameter[5].InitAsDescriptorTable(1, &TerrainDispMap, D3D12_SHADER_VISIBILITY_ALL);      // t5
 
 	slotRootParameter[6].InitAsConstantBufferView(0); // b0 - per object
 	slotRootParameter[7].InitAsConstantBufferView(1); // b1 - per material
@@ -735,10 +705,11 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 		NULL, NULL
 	};
 
-	mShaders["standardVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["opaqueVS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["opaqueHS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "HS", "hs_5_1");
 	mShaders["opaqueDS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "DS", "ds_5_1");
 	mShaders["opaquePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "PS", "ps_5_1");
+	mShaders["wirePS"] = d3dUtil::CompileShader(L"Shaders\\Default.hlsl", nullptr, "WirePS", "ps_5_1");
 
 	mInputLayout =
 	{
@@ -753,7 +724,7 @@ void TexColumnsApp::BuildShapeGeometry()
 {
 	GeometryGenerator geoGen;
 	GeometryGenerator::MeshData box = geoGen.CreateBox(1.0f, 1.0f, 1.0f, 3);
-	GeometryGenerator::MeshData grid = geoGen.CreateGrid(10.0f, 10.0f, 60, 40);
+	GeometryGenerator::MeshData grid = geoGen.CreateGrid(10.0f, 10.0f, 10, 10);
 	GeometryGenerator::MeshData sphere = geoGen.CreateSphere(0.5f, 20, 20);
 	GeometryGenerator::MeshData cylinder = geoGen.CreateCylinder(0.5f, 0.3f, 3.0f, 20, 20);
 
@@ -885,8 +856,8 @@ void TexColumnsApp::BuildPSOs()
 	opaquePsoDesc.pRootSignature = mRootSignature.Get();
 	opaquePsoDesc.VS =
 	{
-		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()),
-		mShaders["standardVS"]->GetBufferSize()
+		reinterpret_cast<BYTE*>(mShaders["opaqueVS"]->GetBufferPointer()),
+		mShaders["opaqueVS"]->GetBufferSize()
 	};
 	opaquePsoDesc.HS =
 	{
@@ -919,47 +890,15 @@ void TexColumnsApp::BuildPSOs()
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&opaquePsoDesc, IID_PPV_ARGS(&mPSOs["opaque"])));
 
 
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC wireframePsoDesc;
+	//PSO for WIREFRAME
 
-	//
-	// PSO for opaque objects.
-	//
-	ZeroMemory(&wireframePsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
-	wireframePsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
-	wireframePsoDesc.pRootSignature = mRootSignature.Get();
-	wireframePsoDesc.VS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["standardVS"]->GetBufferPointer()),
-		mShaders["standardVS"]->GetBufferSize()
-	};
-	wireframePsoDesc.HS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["opaqueHS"]->GetBufferPointer()),
-		mShaders["opaqueHS"]->GetBufferSize()
-	};
-	wireframePsoDesc.DS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["opaqueDS"]->GetBufferPointer()),
-		mShaders["opaqueDS"]->GetBufferSize()
-	};
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC wireframePsoDesc = opaquePsoDesc;
 	wireframePsoDesc.PS =
 	{
-		reinterpret_cast<BYTE*>(mShaders["opaquePS"]->GetBufferPointer()),
-		mShaders["opaquePS"]->GetBufferSize()
+		reinterpret_cast<BYTE*>(mShaders["wirePS"]->GetBufferPointer()),
+		mShaders["wirePS"]->GetBufferSize()
 	};
-	wireframePsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
-
-	wireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME; //wire solid
-
-	wireframePsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-	wireframePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-	wireframePsoDesc.SampleMask = UINT_MAX;
-	wireframePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
-	wireframePsoDesc.NumRenderTargets = 1;
-	wireframePsoDesc.RTVFormats[0] = mBackBufferFormat;
-	wireframePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
-	wireframePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
-	wireframePsoDesc.DSVFormat = mDepthStencilFormat;
+	wireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&wireframePsoDesc, IID_PPV_ARGS(&mPSOs["wireframe"])));
 }
 
@@ -1008,48 +947,8 @@ void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiff
 
 void TexColumnsApp::BuildMaterials()
 {
-	/*auto bricks0 = std::make_unique<Material>();
-	bricks0->Name = "bricks0";
-	bricks0->MatCBIndex = 0;
-	bricks0->DiffuseSrvHeapIndex = 0;
-	bricks0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	bricks0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	bricks0->Roughness = 0.1f;
-
-	auto stone0 = std::make_unique<Material>();
-	stone0->Name = "stone0";
-	stone0->MatCBIndex = 1;
-	stone0->DiffuseSrvHeapIndex = 1;
-	stone0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	stone0->FresnelR0 = XMFLOAT3(0.05f, 0.05f, 0.05f);
-	stone0->Roughness = 0.3f;
-
-	auto tile0 = std::make_unique<Material>();
-	tile0->Name = "tile0";
-	tile0->MatCBIndex = 2;
-	tile0->DiffuseSrvHeapIndex = 2;
-	tile0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	tile0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	tile0->Roughness = 0.3f;*/
-
-	/*auto forest0 = std::make_unique<Material>();
-	forest0->Name = "forest0";
-	forest0->MatCBIndex = 3;
-	forest0->DiffuseSrvHeapIndex = 3;
-	forest0->DisplacementSrvHeapIndex = 4;
-	forest0->NormalSrvHeapIndex = 5;
-	forest0->DiffuseAlbedo = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-	forest0->FresnelR0 = XMFLOAT3(0.02f, 0.02f, 0.02f);
-	forest0->Roughness = 0.3f;*/
-
-	/*mMaterials["bricks0"] = std::move(bricks0);
-	mMaterials["stone0"] = std::move(stone0);
-	mMaterials["tile0"] = std::move(tile0);*/
-	//mMaterials["forest0"] = std::move(forest0);
-
-	CreateMaterial("forest0", 0, TexOffsets["forestTex"], TexOffsets["forestNorm"], TexOffsets["forestDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("stone0", 0, TexOffsets["stoneTex"], TexOffsets["stoneNorm"], TexOffsets["stonetDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
-	CreateMaterial("decal", 0, TexOffsets["decalTex"], TexOffsets["decalNorm"], TexOffsets["decalDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+	//CreateMaterial("decal", 0, TexOffsets["decalTex"], TexOffsets["decalNorm"], TexOffsets["decalDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 }
 
 void TexColumnsApp::BuildRenderItems()
@@ -1112,17 +1011,17 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		cmdList->SetGraphicsRootDescriptorTable(2, dispHandle);     // t2 - displacement
 
 		// Текстуры декали
-		CD3DX12_GPU_DESCRIPTOR_HANDLE decalDiffuseHandle = baseHandle;
-		decalDiffuseHandle.Offset(TexOffsets["decalTex"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(3, decalDiffuseHandle);  // t3 - decal diffuse
+		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainDiffHandle = baseHandle;
+		terrainDiffHandle.Offset(TexOffsets["terrainDiff"], mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(3, terrainDiffHandle);  // t3 - Terrain diffuse
 
-		CD3DX12_GPU_DESCRIPTOR_HANDLE decalNormalHandle = baseHandle;
-		decalNormalHandle.Offset(TexOffsets["decalNorm"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(4, decalNormalHandle);   // t4 - decal normal
+		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainNormHandle = baseHandle;
+		terrainNormHandle.Offset(TexOffsets["terrainNorm"], mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(4, terrainDiffHandle);   // t4 - Terrain normal
 
-		CD3DX12_GPU_DESCRIPTOR_HANDLE decalDispHandle = baseHandle;
-		decalDispHandle.Offset(TexOffsets["decalDisp"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(5, decalDispHandle);     // t5 - decal displacement
+		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainDispHandle = baseHandle;
+		terrainDispHandle.Offset(TexOffsets["terrainDisp"], mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(5, terrainDispHandle);     // t5 - Terrain displacement
 
 		// Constant buffers
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
