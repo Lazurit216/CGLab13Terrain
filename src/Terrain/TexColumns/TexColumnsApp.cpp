@@ -6,6 +6,10 @@
 #include "../../Common/MathHelper.h"
 #include "../../Common/UploadBuffer.h"
 #include "../../Common/GeometryGenerator.h"
+
+#include "../../Common/imgui.h"
+#include "../../Common/imgui_impl_dx12.h"
+#include "../../Common/imgui_impl_win32.h"
 #include "FrameResource.h"
 
 using Microsoft::WRL::ComPtr;
@@ -93,6 +97,9 @@ private:
 	void BuildRenderItems();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
 
+	void InitImGui();
+	void SetupImGui();
+
 	bool mDecalVisible = false; // Флаг видимости декали
 
 	// Метод для ray casting
@@ -113,6 +120,8 @@ private:
 	ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 
 	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
+
+	ComPtr<ID3D12DescriptorHeap> mImGuiSrvDescriptorHeap;
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
@@ -179,6 +188,7 @@ TexColumnsApp::~TexColumnsApp()
 
 bool TexColumnsApp::Initialize()
 {
+
 	if (!D3DApp::Initialize())
 		return false;
 
@@ -196,9 +206,12 @@ bool TexColumnsApp::Initialize()
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
 	BuildMaterials();
+	BuildPSOs();
 	BuildRenderItems();
 	BuildFrameResources();
-	BuildPSOs();
+
+
+	InitImGui();
 
 	// Execute the initialization commands.
 	ThrowIfFailed(mCommandList->Close());
@@ -209,6 +222,36 @@ bool TexColumnsApp::Initialize()
 	FlushCommandQueue();
 
 	return true;
+}
+
+void TexColumnsApp::InitImGui()
+{
+	D3D12_DESCRIPTOR_HEAP_DESC imGuiHeapDesc = {};
+	imGuiHeapDesc.NumDescriptors = 1;
+	imGuiHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	imGuiHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	imGuiHeapDesc.NodeMask = 0; // Or the appropriate node mask if you have multiple GPUs
+	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&imGuiHeapDesc, IID_PPV_ARGS(&mImGuiSrvDescriptorHeap)));
+	// INITIALIZE IMGUI ////////////////////
+		IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGui::StyleColorsDark();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+	ImGui_ImplDX12_InitInfo init_info = {};
+	init_info.Device = md3dDevice.Get();
+	init_info.CommandQueue = mCommandQueue.Get();
+	init_info.NumFramesInFlight = gNumFrameResources;
+	init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // Or your render target format.
+	init_info.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	init_info.SrvDescriptorHeap = mImGuiSrvDescriptorHeap.Get();
+	init_info.LegacySingleSrvCpuDescriptor = mImGuiSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	init_info.LegacySingleSrvGpuDescriptor = mImGuiSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	ImGui_ImplWin32_Init(mhMainWnd);
+	ImGui_ImplDX12_Init(&init_info);
+	////////////////////////////////////////
 }
 
 void TexColumnsApp::OnResize()
@@ -239,10 +282,28 @@ void TexColumnsApp::Update(const GameTimer& gt)
 		CloseHandle(eventHandle);
 	}
 
+	SetupImGui();
+
 	AnimateMaterials(gt);
 	UpdateObjectCBs(gt);
 	UpdateMainPassCB(gt);
 	UpdateMaterialCBs(gt);
+}
+
+void TexColumnsApp::SetupImGui()
+{
+	// === ImGui Setup ===
+	ImGui_ImplDX12_NewFrame();
+	ImGui_ImplWin32_NewFrame();
+	ImGui::NewFrame();
+	ImGui::Begin("Settings");
+
+	ImGui::SetWindowSize(ImVec2(500, 800)); // Ширина, Высота
+	ImGui::SetWindowPos(ImVec2(5, 5));   // X, Y позиция
+
+	ImGui::End();
+
+
 }
 
 void TexColumnsApp::Draw(const GameTimer& gt)
@@ -285,8 +346,21 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(8, passCB->GetGPUVirtualAddress());
 
-
 	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+
+	ImGui::EndFrame();
+	// Устанавливаем heap ImGui перед отрисовкой
+	ID3D12DescriptorHeap* heaps[] = { mImGuiSrvDescriptorHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+	ImGui::Render();
+	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+
+	// После отрисовки ImGui восстанавливайте ваши основные heaps если нужно
+	ID3D12DescriptorHeap* mainHeaps[] = { mSrvDescriptorHeap.Get() };
+	mCommandList->SetDescriptorHeaps(_countof(mainHeaps), mainHeaps);
+
+	ID3D12DescriptorHeap* correctHeaps[] = { mSrvDescriptorHeap.Get() };
 
 	// Indicate a state transition on the resource usage.
 	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
@@ -310,6 +384,8 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	// Because we are on the GPU timeline, the new fence point won't be 
 	// set until the GPU finishes processing all the commands prior to this Signal().
 	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+
+
 
 }
 
@@ -471,59 +547,62 @@ void TexColumnsApp::OnMouseUp(WPARAM btnState, int x, int y)
 
 void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 {
-	if ((btnState & MK_LBUTTON) != 0)
+	if (!ImGui::GetIO().WantCaptureMouse)
 	{
-		// Make each pixel correspond to a quarter of a degree.
-		float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
-		float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
+		if ((btnState & MK_LBUTTON) != 0)
+		{
+			// Make each pixel correspond to a quarter of a degree.
+			float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
+			float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-		// Update angles based on input to orbit camera around box.
-		mTheta += dx;
-		mPhi += dy;
+			// Update angles based on input to orbit camera around box.
+			mTheta += dx;
+			mPhi += dy;
 
-		// Restrict the angle mPhi.
-		mPhi = MathHelper::Clamp(mPhi, 0.1f, MathHelper::Pi - 0.1f);
+			// Restrict the angle mPhi.
+			mPhi = MathHelper::Clamp(mPhi, 0.1f, MathHelper::Pi - 0.1f);
+		}
+		else if ((btnState & MK_RBUTTON) != 0)
+		{
+			// Make each pixel correspond to 0.2 unit in the scene.
+			float dx = 0.05f * static_cast<float>(x - mLastMousePos.x);
+			float dy = 0.05f * static_cast<float>(y - mLastMousePos.y);
+
+			// Update the camera radius based on input.
+			mRadius += dx - dy;
+
+			// Restrict the radius.
+			mRadius = MathHelper::Clamp(mRadius, 5.0f, 150.0f);
+
+			//const float minRadius = 5.0f;
+			//const float maxRadius = 150.0f;
+			//const float minTess = 1.0f;
+			//const float maxTess = 10.0f;
+
+			//// Ступенчатая функция для оптимизации
+			//float tessellationFactor;
+			//if (mRadius < 20.0f) tessellationFactor = 32.0f;
+			//else if (mRadius < 30.0f) tessellationFactor = 10;
+			//else if (mRadius < 60.0f) tessellationFactor = 5.0f;
+			//else tessellationFactor = 1.0f;
+
+			//// Устанавливаем tessellation factor для всех render items
+			//for (auto& item : mAllRitems)
+			//{
+			//	item->g_TessellationFactor = tessellationFactor;
+			//}
+
+
+			//
+
+			//// Debug output
+			//OutputDebugStringA(("Camera Radius: " + std::to_string(mRadius) +
+			//	", Tessellation Factor: " + std::to_string(tessellationFactor) + "\n").c_str());
+		}
+
+		mLastMousePos.x = x;
+		mLastMousePos.y = y;
 	}
-	else if ((btnState & MK_RBUTTON) != 0)
-	{
-		// Make each pixel correspond to 0.2 unit in the scene.
-		float dx = 0.05f * static_cast<float>(x - mLastMousePos.x);
-		float dy = 0.05f * static_cast<float>(y - mLastMousePos.y);
-
-		// Update the camera radius based on input.
-		mRadius += dx - dy;
-
-		// Restrict the radius.
-		mRadius = MathHelper::Clamp(mRadius, 5.0f, 150.0f);
-
-		//const float minRadius = 5.0f;
-		//const float maxRadius = 150.0f;
-		//const float minTess = 1.0f;
-		//const float maxTess = 10.0f;
-
-		//// Ступенчатая функция для оптимизации
-		//float tessellationFactor;
-		//if (mRadius < 20.0f) tessellationFactor = 32.0f;
-		//else if (mRadius < 30.0f) tessellationFactor = 10;
-		//else if (mRadius < 60.0f) tessellationFactor = 5.0f;
-		//else tessellationFactor = 1.0f;
-
-		//// Устанавливаем tessellation factor для всех render items
-		//for (auto& item : mAllRitems)
-		//{
-		//	item->g_TessellationFactor = tessellationFactor;
-		//}
-
-
-		//
-
-		//// Debug output
-		//OutputDebugStringA(("Camera Radius: " + std::to_string(mRadius) +
-		//	", Tessellation Factor: " + std::to_string(tessellationFactor) + "\n").c_str());
-	}
-
-	mLastMousePos.x = x;
-	mLastMousePos.y = y;
 }
 
 void TexColumnsApp::OnKeyboardInput(const GameTimer& gt)
