@@ -133,14 +133,14 @@ HS_CONSTANT_DATA_OUTPUT ConstantsHS(InputPatch<VertexOut, 3> p, uint PatchID : S
     // „ем дальше от камеры, тем меньше тессел€ци€
     float distanceMultiplier = 1.0f;
     
-    if (distanceToCamera < 10.0f)
+    /*if (distanceToCamera < 10.0f)
         distanceMultiplier = 4.0f;
     else if (distanceToCamera < 20.0f)
         distanceMultiplier = 2.f;
     else if (distanceToCamera < 30.0f)
         distanceMultiplier = 1.f;
     else
-        distanceMultiplier = 1.f;
+        distanceMultiplier = 1.f;*/
     
     // »тоговый фактор тессел€ции
     float finalTessFactor = baseTessFactor * distanceMultiplier;

@@ -10,6 +10,8 @@
 #include "../../Common/imgui.h"
 #include "../../Common/imgui_impl_dx12.h"
 #include "../../Common/imgui_impl_win32.h"
+
+#include "../../Common/Camera.h"
 #include "FrameResource.h"
 
 using Microsoft::WRL::ComPtr;
@@ -77,7 +79,6 @@ private:
 	virtual void OnMouseMove(WPARAM btnState, int x, int y)override;
 
 	void OnKeyboardInput(const GameTimer& gt);
-	void UpdateCamera(const GameTimer& gt);
 	void AnimateMaterials(const GameTimer& gt);
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
@@ -132,15 +133,10 @@ private:
 
 	PassConstants mMainPassCB;
 
-	XMFLOAT3 mEyePos = { 0.0f, 0.0f, 0.0f };
-	XMFLOAT4X4 mView = MathHelper::Identity4x4();
-	XMFLOAT4X4 mProj = MathHelper::Identity4x4();
-
-	float mTheta = 1.5f * XM_PI;
-	float mPhi = 0.2f * XM_PI;
-	float mRadius = 15.0f;
 
 	POINT mLastMousePos;
+
+	Camera mCamera;
 
 	bool isFillModeSolid = true;
 
@@ -195,6 +191,7 @@ bool TexColumnsApp::Initialize()
 	// so we have to query this information.
 	mCbvSrvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
+	mCamera.SetPosition(0.0f, 2.0f, 0.f);
 
 	LoadTextures();
 	BuildRootSignature();
@@ -255,14 +252,16 @@ void TexColumnsApp::OnResize()
 	D3DApp::OnResize();
 
 	// The window resized, so update the aspect ratio and recompute the projection matrix.
-	XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
-	XMStoreFloat4x4(&mProj, P);
+	/*XMMATRIX P = XMMatrixPerspectiveFovLH(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	XMStoreFloat4x4(&mProj, P);*/
+	mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+
+	//BoundingFrustum::CreateFromMatrix(mCamFrustum, mCamera.GetProj());
 }
 
 void TexColumnsApp::Update(const GameTimer& gt)
 {
 	OnKeyboardInput(gt);
-	UpdateCamera(gt);
 
 	// Cycle through the circular frame resource array.
 	mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
@@ -429,55 +428,48 @@ void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 			float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
 			float dy = XMConvertToRadians(0.25f * static_cast<float>(y - mLastMousePos.y));
 
-			// Update angles based on input to orbit camera around box.
-			mTheta += dx;
-			mPhi += dy;
-
-			// Restrict the angle mPhi.
-			mPhi = MathHelper::Clamp(mPhi, 0.1f, MathHelper::Pi - 0.1f);
-		}
-		else if ((btnState & MK_RBUTTON) != 0)
-		{
-			// Make each pixel correspond to 0.2 unit in the scene.
-			float dx = 0.05f * static_cast<float>(x - mLastMousePos.x);
-			float dy = 0.05f * static_cast<float>(y - mLastMousePos.y);
-
-			// Update the camera radius based on input.
-			mRadius += dx - dy;
-
-			// Restrict the radius.
-			mRadius = MathHelper::Clamp(mRadius, 5.0f, 150.0f);
+			mCamera.Pitch(dy);
+			mCamera.RotateY(dx);
 		}
 
 		mLastMousePos.x = x;
 		mLastMousePos.y = y;
+	
 	}
 }
 
 void TexColumnsApp::OnKeyboardInput(const GameTimer& gt)
 {
-}
+	const float dt = gt.DeltaTime();
+	float horizSpeed = 20.f;
+	float vertSpeed = 10.f;
+	bool shiftPressed = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
-void TexColumnsApp::UpdateCamera(const GameTimer& gt)
-{
-	// Convert Spherical to Cartesian coordinates.
-	mEyePos.x = mRadius * sinf(mPhi) * cosf(mTheta);
-	mEyePos.z = mRadius * sinf(mPhi) * sinf(mTheta);
-	mEyePos.y = mRadius * cosf(mPhi);
+	if (GetAsyncKeyState('W') & 0x8000)
+	{
+		if (shiftPressed) mCamera.MoveUp(vertSpeed * dt);
+		else mCamera.Walk(horizSpeed * dt);
+	}
 
-	// Build the view matrix.
-	XMVECTOR pos = XMVectorSet(mEyePos.x, mEyePos.y, mEyePos.z, 1.0f);
-	XMVECTOR target = XMVectorZero();
-	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+	if (GetAsyncKeyState('S') & 0x8000)
+	{
+		if (shiftPressed) mCamera.MoveUp(-vertSpeed * dt);
+		else mCamera.Walk(-horizSpeed * dt);
+	}
 
-	XMMATRIX view = XMMatrixLookAtLH(pos, target, up);
-	XMStoreFloat4x4(&mView, view);
+	if (GetAsyncKeyState('A') & 0x8000)
+		mCamera.Strafe(-horizSpeed * dt);
 
-	// Debug output
-	/*OutputDebugStringA(("Camera Pos: " +
-		std::to_string(mEyePos.x) + ", " +
-		std::to_string(mEyePos.y) + ", " +
-		std::to_string(mEyePos.z) + "\n").c_str());*/
+	if (GetAsyncKeyState('D') & 0x8000)
+		mCamera.Strafe(horizSpeed * dt);
+
+	/*if (GetAsyncKeyState('1') & 0x8000)
+		mFrustumCullingEnabled = true;
+
+	if (GetAsyncKeyState('2') & 0x8000)
+		mFrustumCullingEnabled = false;*/
+
+	mCamera.UpdateViewMatrix();
 }
 
 void TexColumnsApp::AnimateMaterials(const GameTimer& gt)
@@ -540,9 +532,8 @@ void TexColumnsApp::UpdateMaterialCBs(const GameTimer& gt)
 void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 {
 
-	// Проверьте что матрицы не нулевые
-	XMMATRIX view = XMLoadFloat4x4(&mView);
-	XMMATRIX proj = XMLoadFloat4x4(&mProj);
+	XMMATRIX view = mCamera.GetView();
+	XMMATRIX proj = mCamera.GetProj();
 
 	if (XMMatrixIsIdentity(view) || XMMatrixIsIdentity(proj)) {
 		OutputDebugStringA("WARNING: View or projection matrix is identity!\n");
@@ -561,7 +552,7 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
-	mMainPassCB.EyePosW = mEyePos;
+	mMainPassCB.EyePosW = mCamera.GetPosition3f();
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
