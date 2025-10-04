@@ -74,6 +74,8 @@ public:
 	void UpdateViewMatrix();
 	void UpdateFrustum();
 	DirectX::BoundingFrustum GetFrustum() const;
+
+	float cameraFarZ = 20000;
 private:
 
 	// Camera coordinate system with coordinates relative to world space.

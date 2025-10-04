@@ -61,6 +61,9 @@ struct TileConstants
     float TileSize;
     float mapSize;
     float hScale;
+
+    int showBoundingBox;
+
 };
 
 // Stores the resources needed for the CPU to build the command lists

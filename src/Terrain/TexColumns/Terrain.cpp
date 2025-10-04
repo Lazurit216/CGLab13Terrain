@@ -75,13 +75,14 @@ std::vector<Tile*>& Terrain::GetVisibleTiles()
     return mVisibleTiles;
 }
 
-
+float minHeight=-5;
+float maxHeight = 400;
 void Terrain::BuildTree()
 {
     //float halfSize = mWorldSize * 0.5f;
     
     mRoot = std::make_unique<QuadTreeNode>();
-    mRoot->boundingBox= CalculateAABB(mTerrainOffset, mWorldSize, -5.0f, 400.0f);
+    mRoot->boundingBox= CalculateAABB(mTerrainOffset, mWorldSize, minHeight, maxHeight);
     mRoot->size = mWorldSize;
     mRoot->depth = 0;
     mRoot->isLeaf = false;
@@ -109,7 +110,7 @@ void Terrain::BuildNode(QuadTreeNode* node, float x, float z, int depth)
         float childX = x + (i % 2) * childSize;
         float childZ = z + (i / 2) * childSize;
 
-        child->boundingBox= CalculateAABB(XMFLOAT3(childX, mTerrainOffset.y, childZ), childSize, -5.0f, 400.0f);
+        child->boundingBox= CalculateAABB(XMFLOAT3(childX, mTerrainOffset.y, childZ), childSize, minHeight, maxHeight);
         child->size = childSize;
         child->depth = depth + 1;
         child->isLeaf = false;
@@ -121,8 +122,8 @@ void Terrain::BuildNode(QuadTreeNode* node, float x, float z, int depth)
 BoundingBox Terrain::CalculateAABB(const XMFLOAT3& pos, float size, float minHeight, float maxHeight)
 {
     BoundingBox aabb;
-    auto minPoint = XMFLOAT3(pos.x, 0, pos.z);
-    auto maxPoint = XMFLOAT3(pos.x + size, 100, pos.z + size);
+    auto minPoint = XMFLOAT3(pos.x, minHeight, pos.z);
+    auto maxPoint = XMFLOAT3(pos.x + size, maxHeight, pos.z + size);
     XMVECTOR pt1 = XMLoadFloat3(&minPoint);
     XMVECTOR pt2 = XMLoadFloat3(&maxPoint);
     BoundingBox::CreateFromPoints(aabb, pt1, pt2);

@@ -96,6 +96,10 @@ private:
 	void BuildShadersAndInputLayout();
 	void BuildShapeGeometry();
 
+	void CreateBoundingBoxMesh(const BoundingBox& bbox, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices);
+	void BuildDebugGeometry();
+	void RenderBoundingBoxes();
+
 	void GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSize, int lodLevel, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices);
 	void BuildTerrainGeometry();
 	void UpdateTerrain(const GameTimer& gt);
@@ -139,6 +143,7 @@ private:
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
+	std::vector<D3D12_INPUT_ELEMENT_DESC> debugInputLayout;
 
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
@@ -155,11 +160,14 @@ private:
 	Camera mCamera;
 
 	bool isFillModeSolid = true;
+	bool showTilesBoundingBox=false;
 
 	float mScale = 1.f;
 	float mTessellationFactor = 1.f;
 
 	std::unique_ptr<Terrain> mTerrain;
+	int mMaxLOD = 5;
+	XMFLOAT3 terrainOffset = XMFLOAT3(0.f, -100, 0.f);
 	std::vector<Tile*> mVisibleTiles;
 };
 
@@ -245,7 +253,7 @@ bool TexColumnsApp::Initialize()
 void TexColumnsApp::InitTerrain()
 {
 	mTerrain = std::make_unique<Terrain>();
-	mTerrain->Initialize(md3dDevice.Get(), 1024, 5, XMFLOAT3(0, 0, 0));
+	mTerrain->Initialize(md3dDevice.Get(), 1024, mMaxLOD, terrainOffset);
 }
 
 void TexColumnsApp::InitImGui()
@@ -283,7 +291,7 @@ void TexColumnsApp::OnResize()
 	D3DApp::OnResize();
 
 
-	mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, 1000.0f);
+	mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, mCamera.cameraFarZ);
 
 }
 
@@ -339,6 +347,10 @@ void TexColumnsApp::SetupImGui()
 	ImGui::DragFloat("##TessFactor", &mTessellationFactor, 1.f, 1.f, 32, "%.1f");
 
 	ImGui::Separator();
+
+	ImGui::Text("Terrain:");
+	//ImGui::DragFloat3("Terrain offset", &terrainOffset.x, 1.0f, -100.0f, 100.0f);
+	ImGui::Checkbox("Show Bounding Box", &showTilesBoundingBox);
 
 	ImGui::SetWindowSize(ImVec2(300, 500)); // Ширина, Высота
 	ImGui::SetWindowPos(ImVec2(5, 5));   // X, Y позиция
@@ -498,7 +510,7 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
 	mMainPassCB.NearZ = 1.0f;
-	mMainPassCB.FarZ = 20000.0f;
+	mMainPassCB.FarZ = mCamera.cameraFarZ;
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 
@@ -520,16 +532,20 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 void TexColumnsApp::UpdateTerrainCBs(const GameTimer& gt)
 {
 	auto currTileCB = mCurrFrameResource->TerrainCB.get();
-	for (auto& t : mTerrain->GetAllTiles())
+	for (auto& tile : mTerrain->GetAllTiles())
 	{
 	    TileConstants tileConstants;
-		tileConstants.TilePosition = t->worldPos;
-		tileConstants.TileSize = t->tileSize;
+
+		tileConstants.TilePosition = tile->worldPos;
+		tileConstants.TileSize = tile->tileSize;
 		tileConstants.mapSize = mTerrain->mWorldSize;
 		tileConstants.hScale = mTerrain->mHeightScale;
-		currTileCB->CopyData(t->tileIndex, tileConstants);
 
-		t->NumFramesDirty--;
+		tileConstants.showBoundingBox = showTilesBoundingBox ? 1 : 0;
+
+		currTileCB->CopyData(tile->tileIndex, tileConstants);
+
+		tile->NumFramesDirty--;
 	}
 }
 
@@ -727,12 +743,20 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["terrainPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "PS", "ps_5_1");
 	mShaders["wireTerrPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "WirePS", "ps_5_1"); 
 
+	mShaders["debugVS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["debugPS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "PS", "ps_5_1");
+
 	mInputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	};
+
+	debugInputLayout =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 }
 
@@ -836,6 +860,47 @@ void TexColumnsApp::BuildPSOs()
 	};
 	terrWirePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&terrWirePsoDesc, IID_PPV_ARGS(&mPSOs["wireTerrain"])));
+
+
+	//PSO for debug
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC debugPSODesc = {};
+	debugPSODesc.pRootSignature = mTerrainRootSignature.Get(); // Не забудь root signature
+
+	// Shaders
+	debugPSODesc.VS = {
+		reinterpret_cast<BYTE*>(mShaders["debugVS"]->GetBufferPointer()),
+		mShaders["debugVS"]->GetBufferSize()
+	};
+	debugPSODesc.PS = {
+		reinterpret_cast<BYTE*>(mShaders["debugPS"]->GetBufferPointer()),
+		mShaders["debugPS"]->GetBufferSize()
+	};
+
+	// Input Layout (только позиция)
+	debugPSODesc.InputLayout = { debugInputLayout.data(), (UINT)debugInputLayout.size() };
+	debugPSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+
+	// Rasterizer - только самое необходимое
+	debugPSODesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	debugPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	debugPSODesc.RasterizerState.DepthClipEnable = TRUE;
+
+	// Blend - дефолтный непрозрачный
+	debugPSODesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+
+	// Depth - читаем но не пишем
+	debugPSODesc.DepthStencilState.DepthEnable = TRUE;
+	debugPSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	debugPSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+
+	// Formats
+	debugPSODesc.SampleMask = UINT_MAX;
+	debugPSODesc.SampleDesc.Count = 1;
+	debugPSODesc.NumRenderTargets = 1;
+	debugPSODesc.RTVFormats[0] = mBackBufferFormat;
+	debugPSODesc.DSVFormat = mDepthStencilFormat;
+
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&debugPSODesc, IID_PPV_ARGS(&mPSOs["debug"])));
 }
 
 void TexColumnsApp::BuildFrameResources()
@@ -990,18 +1055,16 @@ void TexColumnsApp::BuildShapeGeometry()
 
 void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSize, int lodLevel, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices)
 {
-	int tileResolution = 128;
-	int resolution = tileResolution >> lodLevel;
-	if (resolution < 4) resolution = 4;
-	/*int tileResolution = 256;
-	float resFactor = .5f;
-	int resolution = static_cast<int>(tileResolution * std::pow(resFactor, lodLevel));*/
-
+	int minResolution = 8;    // Минимальное разрешение
+	//int maxResolution = 16;  // Максимальное разрешение
+	// Разрешение увеличивается с уменьшением LOD уровня
+	int resolution = minResolution << lodLevel;
+	resolution = min(resolution, minResolution);
 	vertices.clear();
 	indices.clear();
 
 	float stepSize = tileSize / (resolution - 1);
-	float curtainDepth = 100;
+	float curtainDepth = 50;
 
 	//main vertices
 	for (int z = 0; z < resolution; z++)
@@ -1009,7 +1072,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 		for (int x = 0; x < resolution; x++)
 		{
 			Vertex vertex;
-			vertex.Pos = XMFLOAT3(worldPos.x + x * stepSize, 0.0f, worldPos.z + z * stepSize);
+			vertex.Pos = XMFLOAT3(worldPos.x + x * stepSize, worldPos.y, worldPos.z + z * stepSize);
 			vertex.TexC = XMFLOAT2((float)x / (resolution - 1), (float)z / (resolution - 1));
 			vertex.Normal = XMFLOAT3(0.0f, 1.0f, 0.0f);
 			vertex.Tangent = XMFLOAT3(1.0f, 0.0f, 0.0f);
@@ -1024,7 +1087,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	for (int z = 0; z < resolution; z++)
 	{
 		Vertex vertex = vertices[z * resolution];
-		vertex.Pos.y = -curtainDepth; 
+		vertex.Pos.y = worldPos.y -curtainDepth;
 		vertices.push_back(vertex);
 	}
 
@@ -1032,7 +1095,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	for (int z = 0; z < resolution; z++)
 	{
 		Vertex vertex = vertices[z * resolution + (resolution - 1)];
-		vertex.Pos.y = -curtainDepth;
+		vertex.Pos.y = worldPos.y -curtainDepth;
 		vertices.push_back(vertex);
 	}
 
@@ -1040,7 +1103,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	for (int x = 0; x < resolution ; x++)
 	{
 		Vertex vertex = vertices[0 * resolution + x];
-		vertex.Pos.y = -curtainDepth;
+		vertex.Pos.y = worldPos.y -curtainDepth;
 		vertices.push_back(vertex);
 	}
 
@@ -1048,7 +1111,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	for (int x = 0; x < resolution ; x++)
 	{
 		Vertex vertex = vertices[(resolution - 1) * resolution + x];
-		vertex.Pos.y = -curtainDepth;
+		vertex.Pos.y = worldPos.y -curtainDepth;
 		vertices.push_back(vertex);
 	}
 
@@ -1210,6 +1273,113 @@ void TexColumnsApp::BuildTerrainGeometry()
 	terrainGeo->IndexBufferByteSize = ibByteSize;
 
 	mGeometries[terrainGeo->Name] = std::move(terrainGeo);
+}
+
+void TexColumnsApp::CreateBoundingBoxMesh(const BoundingBox& bbox, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices)
+{
+	vertices.clear();
+	indices.clear();
+
+	// Получаем 8 углов bounding box
+	XMFLOAT3 corners[8];
+	bbox.GetCorners(corners);
+
+	// Создаем вершины
+	for (int i = 0; i < 8; i++) {
+		Vertex vertex;
+		vertex.Pos = corners[i];
+		vertex.Normal = XMFLOAT3(0, 1, 0);
+		vertex.TexC = XMFLOAT2(0, 0);
+		vertex.Tangent = XMFLOAT3(1, 0, 0);
+		vertices.push_back(vertex);
+	}
+
+	// Индексы для 12 линий (24 индекса)
+	// Каждая линия = 2 индекса
+	std::uint32_t lineIndices[] = {
+		// Нижняя грань
+		0, 1, 1, 2, 2, 3, 3, 0,
+		// Верхняя грань
+		4, 5, 5, 6, 6, 7, 7, 4,
+		// Вертикальные ребра
+		0, 4, 1, 5, 2, 6, 3, 7
+	};
+
+	indices.insert(indices.end(), std::begin(lineIndices), std::end(lineIndices));
+}
+
+void TexColumnsApp::BuildDebugGeometry()
+{
+	std::vector<Vertex> vertices;
+	std::vector<std::uint32_t> indices;
+
+	// Создаем геометрию для единичного bounding box
+	BoundingBox unitBox;
+	BoundingBox::CreateFromPoints(unitBox,
+		XMVectorSet(-0.5f, -0.5f, -0.5f, 0.0f),
+		XMVectorSet(0.5f, 0.5f, 0.5f, 0.0f)
+	);
+
+	CreateBoundingBoxMesh(unitBox, vertices, indices);
+
+	// Создаем mesh geometry
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "debugBoxGeo";
+
+	// Vertex buffer
+	UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+	// Index buffer
+	UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint32_t);
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+
+	geo->VertexByteStride = sizeof(Vertex);
+	geo->VertexBufferByteSize = vbByteSize;
+	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
+	geo->IndexBufferByteSize = ibByteSize;
+
+	// Submesh
+	SubmeshGeometry submesh;
+	submesh.IndexCount = (UINT)indices.size();
+	submesh.StartIndexLocation = 0;
+	submesh.BaseVertexLocation = 0;
+	geo->DrawArgs["boundainBox"] = submesh;
+
+	mGeometries[geo->Name] = std::move(geo);
+}
+
+void  TexColumnsApp::RenderBoundingBoxes()
+{
+	//if (!showTilesBoundingBox) return;
+
+	//mCommandList->SetPipelineState(mPSOs["debug"].Get());
+	//mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+
+	//auto debugGeo = mGeometries["debugBoxGeo"].get();
+	//mCommandList->IASetVertexBuffers(0, 1, &debugGeo->VertexBufferView());
+	//mCommandList->IASetIndexBuffer(&debugGeo->IndexBufferView());
+	//auto& tiles = mTerrain->GetAllTiles();
+	//for (const auto& tile : tiles) 
+	//{
+	//	BoundingBox debugBox = tile->boundingBox;
+	//	// Вычисляем матрицу преобразования из unit box в нужный bounding box
+	//	XMFLOAT3 center, extents;
+	//	center = debugBox.Center;
+	//	extents = debugBox.Extents;
+
+	//	// Масштабируем unit box до размеров bounding box
+	//	XMMATRIX scale = XMMatrixScaling(extents.x * 2, extents.y * 2, extents.z * 2);
+	//	XMMATRIX translation = XMMatrixTranslation(center.x, center.y, center.z);
+	//	XMMATRIX world = scale * translation;
+
+	//	auto submesh = debugGeo->DrawArgs["box"];
+	//	mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1,
+	//		submesh.StartIndexLocation,
+	//		submesh.BaseVertexLocation, 0);
+	//}
 }
 
 void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
@@ -1407,7 +1577,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	auto passCB = mCurrFrameResource->PassCB->Resource();
 	mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
 
-	DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+	//DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
 	//Draw Terrain
 	mVisibleTiles.clear();
@@ -1428,6 +1598,8 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
 		// Рисуем тайлы террейна
 		DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
+
+		RenderBoundingBoxes();
 
 		// Возвращаемся к основной PSO если нужно продолжить рендеринг других объектов
 		if (isFillModeSolid)

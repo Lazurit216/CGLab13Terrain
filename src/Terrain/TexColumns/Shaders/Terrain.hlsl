@@ -62,7 +62,7 @@ cbuffer cbTerrainTile : register(b3)
     float gTileSize;
     float gMapSize;
     float gHeightScale;
-
+    int showBoundingBox;
 };
 
 SamplerState gsamPointWrap : register(s0);
@@ -159,8 +159,41 @@ float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, floa
     return bumpedNormalW;
 }
 
+float4 ShowBoundainBoxes(VertexOut pin) : SV_Target
+{
+    if (showBoundingBox == 1)
+    {
+        // Вычисляем границы тайла как в C++ коде
+        float3 bboxMin = float3(gTilePosition.x, 0.0f, gTilePosition.z);
+        float3 bboxMax = float3(gTilePosition.x + gTileSize, gHeightScale, gTilePosition.z + gTileSize);
+    
+        // Толщина границы (можно настроить)
+        float borderThickness = 0.02f * gTileSize;
+    
+        // Проверяем, находится ли пиксель близко к любой границе
+        bool nearLeft = (pin.PosW.x - bboxMin.x) < borderThickness;
+        bool nearRight = (bboxMax.x - pin.PosW.x) < borderThickness;
+        bool nearBottom = (pin.PosW.z - bboxMin.z) < borderThickness;
+        bool nearTop = (bboxMax.z - pin.PosW.z) < borderThickness;
+    
+        // Если пиксель близко к любой из четырех границ - рисуем границу
+        if (nearLeft || nearRight || nearBottom || nearTop)
+        {
+            return float4(0.0f, 1.0f, 0.0f, 1.0f); // Зеленая граница
+        }
+    }
+    
+    // Если не рисуем границу или showBoundingBox == 0, возвращаем прозрачный
+    // Это позволит основной функции WirePS продолжить выполнение
+    return float4(0, 0, 0, 0);
+}
+
 float4 PS(VertexOut pin) : SV_Target
 {
+        // Сначала проверяем границы
+    float4 borderColor = ShowBoundainBoxes(pin);
+    if (borderColor.a > 0.5)  return borderColor;
+    
     float4 diffuseAlbedo = gTerrDiffMap.Sample(gsamAnisotropicWrap, pin.TexC);
     diffuseAlbedo *= gDiffuseAlbedo;
 
@@ -188,17 +221,19 @@ float4 PS(VertexOut pin) : SV_Target
 
 float4 WirePS(VertexOut pin) : SV_Target
 {
-    //return float4(1.f, 1.f, 1.f, 1.0f);
+    // Сначала проверяем границы
+    float4 borderColor = ShowBoundainBoxes(pin);
+    if (borderColor.a > 0.5)  return borderColor;
     
+    // Основной цвет тайла
     float minSize = 4;
     float normalizedSize = saturate((gTileSize - minSize) / (gMapSize - minSize));
 
-// Нелинейное преобразование для большей контрастности
+    // Нелинейное преобразование для большей контрастности
     normalizedSize = smoothstep(0.0, 1.0, normalizedSize);
 
-// Очень насыщенные цвета
+    // Очень насыщенные цвета
     float4 smallColor = float4(0.1f, 0.1f, 0.8f, 1.0f); // Темно-синий
     float4 largeColor = float4(0.9f, 0.1f, 0.1f, 1.0f); // Темно-красный
-
     return lerp(smallColor, largeColor, normalizedSize);
 }
