@@ -188,5 +188,17 @@ float4 PS(VertexOut pin) : SV_Target
 
 float4 WirePS(VertexOut pin) : SV_Target
 {
-    return float4(1.f, 1.f, 1.f, 1.0f);
+    //return float4(1.f, 1.f, 1.f, 1.0f);
+    
+    float minSize = 4;
+    float normalizedSize = saturate((gTileSize - minSize) / (gMapSize - minSize));
+
+// Нелинейное преобразование для большей контрастности
+    normalizedSize = smoothstep(0.0, 1.0, normalizedSize);
+
+// Очень насыщенные цвета
+    float4 smallColor = float4(0.1f, 0.1f, 0.8f, 1.0f); // Темно-синий
+    float4 largeColor = float4(0.9f, 0.1f, 0.1f, 1.0f); // Темно-красный
+
+    return lerp(smallColor, largeColor, normalizedSize);
 }

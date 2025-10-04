@@ -23,6 +23,9 @@ struct QuadTreeNode
 	bool isLeaf;                 // Является ли листом
 	std::unique_ptr<QuadTreeNode> children[4]; // Дочерние узлы
 	Tile* tile;  // Связанный тайл
+
+	bool ShouldSplit(const XMFLOAT3& cameraPos, float heightscale, int mapsize) const;
+	void UpdateVisibility(BoundingFrustum& frustum, const XMFLOAT3& cameraPos, std::vector<Tile*>& visibleTiles, float heightscale, int mapsize);
 };
 
 class Terrain
@@ -38,10 +41,11 @@ public:
 	void UpdateLOD(const XMFLOAT3& cameraPos, float lodTransitionDistance);
 
 private:
-	void CreateTileForNode(QuadTreeNode* node, int depth);
-	void BuildNode(QuadTreeNode* node, float x, float y, int depth);
+	void CreateTileForNode(QuadTreeNode* node, float x, float z, int depth);
+	void BuildNode(QuadTreeNode* node, float x, float z, int depth);
 	void CollectVisibleTiles(QuadTreeNode* node, const DirectX::BoundingFrustum& frustum, std::vector<Tile*>& visibleTiles);
 	void UpdateNodeLOD(QuadTreeNode* node, const XMFLOAT3& cameraPos, float lodTransitionDistance);
+	void HideChildrenTiles(QuadTreeNode* node);
 	BoundingBox CalculateAABB(const XMFLOAT3& pos, float size, float minHeight, float maxHeight);
 
 public:

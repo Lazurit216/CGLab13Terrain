@@ -245,7 +245,7 @@ bool TexColumnsApp::Initialize()
 void TexColumnsApp::InitTerrain()
 {
 	mTerrain = std::make_unique<Terrain>();
-	mTerrain->Initialize(md3dDevice.Get(), 512, 5, XMFLOAT3(0, 0, 0));
+	mTerrain->Initialize(md3dDevice.Get(), 1024, 5, XMFLOAT3(0, 0, 0));
 }
 
 void TexColumnsApp::InitImGui()
@@ -538,8 +538,15 @@ void TexColumnsApp::UpdateTerrain(const GameTimer& gt)
 	if (!mTerrain)
 		return;
 
+
 	mTerrain->Update(mCamera.GetPosition3f(), mCamera.GetFrustum());
 
+	//auto& visibleTiles = mTerrain->GetVisibleTiles();
+	//for (auto& tile : visibleTiles)
+	//{
+	//	auto& rItem = mAllRitems.at(tile->renderItemIndex);
+
+	//}
 }
 
 void TexColumnsApp::LoadDDSTexture(std::string name, std::wstring filename)
@@ -983,15 +990,18 @@ void TexColumnsApp::BuildShapeGeometry()
 
 void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSize, int lodLevel, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices)
 {
-	int tileResolution = 32;
-	float resFactor = 1;
-	int resolution = static_cast<int>(tileResolution * std::pow(resFactor, lodLevel));
+	int tileResolution = 128;
+	int resolution = tileResolution >> lodLevel;
+	if (resolution < 4) resolution = 4;
+	/*int tileResolution = 256;
+	float resFactor = .5f;
+	int resolution = static_cast<int>(tileResolution * std::pow(resFactor, lodLevel));*/
 
 	vertices.clear();
 	indices.clear();
 
 	float stepSize = tileSize / (resolution - 1);
-	float curtainDepth = 5;
+	float curtainDepth = 100;
 
 	//main vertices
 	for (int z = 0; z < resolution; z++)
@@ -1027,7 +1037,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	}
 
 	// bottom (z = 0)
-	for (int x = 1; x < resolution - 1; x++)
+	for (int x = 0; x < resolution ; x++)
 	{
 		Vertex vertex = vertices[0 * resolution + x];
 		vertex.Pos.y = -curtainDepth;
@@ -1035,7 +1045,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	}
 
 	// top(z = resolution-1)
-	for (int x = 1; x < resolution - 1; x++)
+	for (int x = 0; x < resolution ; x++)
 	{
 		Vertex vertex = vertices[(resolution - 1) * resolution + x];
 		vertex.Pos.y = -curtainDepth;
@@ -1066,7 +1076,7 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	int leftCurtainStart = mainVertexCount;
 	int rightCurtainStart = leftCurtainStart + resolution;
 	int bottomCurtainStart = rightCurtainStart + resolution;
-	int topCurtainStart = bottomCurtainStart + (resolution - 2);
+	int topCurtainStart = bottomCurtainStart + resolution;
 
 	//left
 	for (int z = 0; z < resolution - 1; z++)
@@ -1103,12 +1113,12 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	}
 
 	// bottom
-	for (int x = 1; x < resolution - 2; x++)
+	for (int x = 0; x < resolution - 1; x++)
 	{
 		UINT edge1 = x;
 		UINT edge2 = x + 1;
-		UINT curtain1 = bottomCurtainStart + (x - 1);
-		UINT curtain2 = bottomCurtainStart + x;
+		UINT curtain1 = bottomCurtainStart + x;
+		UINT curtain2 = bottomCurtainStart + x+1;
 
 		indices.push_back(edge1);
 		indices.push_back(edge2);
@@ -1120,12 +1130,12 @@ void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSiz
 	}
 
 	// top
-	for (int x = 1; x < resolution - 2; x++)
+	for (int x = 0; x < resolution - 1; x++)
 	{
 		UINT edge1 = (resolution - 1) * resolution + x;
 		UINT edge2 = (resolution - 1) * resolution + x + 1;
-		UINT curtain1 = topCurtainStart + (x - 1);
-		UINT curtain2 = topCurtainStart + x;
+		UINT curtain1 = topCurtainStart + x;
+		UINT curtain2 = topCurtainStart + x+1;
 
 		indices.push_back(edge1);
 		indices.push_back(curtain1);
@@ -1248,9 +1258,6 @@ void TexColumnsApp::BuildRenderItems()
 	{
 		auto renderItem = std::make_unique<RenderItem>();
 		renderItem->World = MathHelper::Identity4x4();
-
-		XMMATRIX translation = XMMatrixTranslation(tile->worldPos.x, tile->worldPos.y, tile->worldPos.z);
-		XMStoreFloat4x4(&renderItem->World, translation);
 
 		renderItem->TexTransform = MathHelper::Identity4x4();
 		renderItem->ObjCBIndex = static_cast<int>(mAllRitems.size());

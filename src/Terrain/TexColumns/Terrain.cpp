@@ -4,7 +4,7 @@ void Terrain::Initialize(ID3D12Device* device, float worldSize, int maxLOD, XMFL
 {
     mWorldSize = worldSize;
     mMaxLOD = maxLOD;
-    mHeightScale = 50.0f;
+    mHeightScale = 500;
     mTerrainOffset = terrainOffset;
     tileIndex = 0;
     BuildTree();
@@ -15,13 +15,53 @@ void Terrain::Initialize(ID3D12Device* device, float worldSize, int maxLOD, XMFL
 void Terrain::Update(const XMFLOAT3& cameraPos, BoundingFrustum& frustum)
 {
     mVisibleTiles.clear();
+    mRoot->UpdateVisibility(frustum, cameraPos, mVisibleTiles, mHeightScale, (int)mWorldSize);
+}
 
-    std::vector<Tile*> visibleTiles;
-    CollectVisibleTiles(mRoot.get(), frustum, visibleTiles);
-    mVisibleTiles = std::move(visibleTiles);
+bool QuadTreeNode::ShouldSplit(const XMFLOAT3& cameraPos, float heightscale, int mapsize) const
+{
+    auto camPos = cameraPos;
+    camPos.y = 0;
+    XMVECTOR camPosVec = XMLoadFloat3(&camPos);
+    float lodneeddist = (mapsize / 2.0f - depth * mapsize / 16);
+    BoundingSphere sphere;
+    sphere.Center = cameraPos;
+    sphere.Radius = lodneeddist;
+    if (sphere.Intersects(boundingBox))
+    {
+        return true;
+    }
+    return false;
+}
 
-    float lodTransitionDistance = mWorldSize/10; // Настройте под свои нужды
-    UpdateLOD(cameraPos, lodTransitionDistance);
+// 4. Обновление видимости в квадродереве
+void QuadTreeNode::UpdateVisibility(BoundingFrustum& frustum, const XMFLOAT3& cameraPos, std::vector<Tile*>& visibleTiles, float heightscale, int mapsize)
+{
+    if (frustum.Contains(boundingBox) == DISJOINT)
+    {
+        return; // Узел полностью не виден
+    }
+
+    // Если узел является "листом" (нет дочерних узлов) или не нужно его разбивать
+    if (!children[0] || !ShouldSplit(cameraPos, heightscale, mapsize))
+    {
+        // Рендерим текущий узел (тайл)
+        if (tile)
+        {
+            visibleTiles.push_back(tile);
+        }
+    }
+    else // Если нужно разбивать
+    {
+        // Рекурсивно обновляем видимость дочерних узлов
+        for (int i = 0; i < 4; i++)
+        {
+            if (children[i])
+            {
+                children[i]->UpdateVisibility(frustum, cameraPos, visibleTiles, heightscale, mapsize);
+            }
+        }
+    }
 }
 
 std::vector<std::shared_ptr<Tile>>& Terrain::GetAllTiles()
@@ -49,9 +89,9 @@ void Terrain::BuildTree()
     BuildNode(mRoot.get(), mTerrainOffset.x, mTerrainOffset.z, 0);
 }
 
-void Terrain::BuildNode(QuadTreeNode* node, float x, float y, int depth)
+void Terrain::BuildNode(QuadTreeNode* node, float x, float z, int depth)
 {
-    CreateTileForNode(node, depth);
+    CreateTileForNode(node, x, z, depth);
 
     // Если достигли максимальной глубины - останавливаемся
     if (depth >= mMaxLOD) 
@@ -67,15 +107,15 @@ void Terrain::BuildNode(QuadTreeNode* node, float x, float y, int depth)
         auto& child = node->children[i];
 
         float childX = x + (i % 2) * childSize;
-        float childY = y + (i / 2) * childSize;
+        float childZ = z + (i / 2) * childSize;
 
-        child->boundingBox= CalculateAABB(XMFLOAT3(childX, mTerrainOffset.y, childY), childSize, -5.0f, 400.0f);
+        child->boundingBox= CalculateAABB(XMFLOAT3(childX, mTerrainOffset.y, childZ), childSize, -5.0f, 400.0f);
         child->size = childSize;
         child->depth = depth + 1;
         child->isLeaf = false;
 
         // Рекурсивно строим дочерний узел
-        BuildNode(child.get(), childX, childY, depth + 1);
+        BuildNode(child.get(), childX, childZ, depth +1);
     }
 }
 BoundingBox Terrain::CalculateAABB(const XMFLOAT3& pos, float size, float minHeight, float maxHeight)
@@ -90,15 +130,14 @@ BoundingBox Terrain::CalculateAABB(const XMFLOAT3& pos, float size, float minHei
 }
 
 // Создание тайла для узла
-void Terrain::CreateTileForNode(QuadTreeNode* node, int depth)
+void Terrain::CreateTileForNode(QuadTreeNode* node, float x, float z, int depth)
 {
     auto tile = std::make_shared<Tile>();
-    XMFLOAT3 center = node->boundingBox.Center;
 
-    tile->worldPos = center;
+    tile->worldPos = XMFLOAT3(x, mTerrainOffset.y, z);
 
     tile->lodLevel = depth;
-    tile->tileSize = node->size;
+    tile->tileSize = mWorldSize / (1 << depth);
     tile->tileIndex = tileIndex++;
     tile->boundingBox = node->boundingBox;
     tile->isVisible = true;
@@ -106,72 +145,94 @@ void Terrain::CreateTileForNode(QuadTreeNode* node, int depth)
     node->tile = mAllTiles.back().get();
 }
 
-// Рекурсивный сбор видимых тайлов
-void Terrain::CollectVisibleTiles(QuadTreeNode* node, const BoundingFrustum& frustum, std::vector<Tile*>& visibleTiles)
-{
-    if (!node) return;
-
-    // Проверяем видимость bounding box'а
-    if (node->tile && node->tile->isVisible) {
-        if (frustum.Intersects(node->tile->boundingBox)) {
-            visibleTiles.push_back(node->tile);
-        }
-    }
-
-    // Рекурсивно проверяем дочерние узлы
-    if (!node->isLeaf) {
-        for (int i = 0; i < 4; ++i) {
-            CollectVisibleTiles(node->children[i].get(), frustum, visibleTiles);
-        }
-    }
-}
-void Terrain::UpdateLOD(const XMFLOAT3& cameraPos, float lodTransitionDistance) 
+void Terrain::UpdateLOD(const XMFLOAT3& cameraPos, float lodTransitionDistance)
 {
     UpdateNodeLOD(mRoot.get(), cameraPos, lodTransitionDistance);
 }
-// Обновление LOD на основе расстояния до камеры
+
 void Terrain::UpdateNodeLOD(QuadTreeNode* node, const XMFLOAT3& cameraPos, float lodTransitionDistance)
 {
     if (!node || !node->tile) return;
 
-    // Вычисляем расстояние от камеры до центра тайла
-    XMFLOAT3 tileCenter = node->tile->worldPos;
-    float distance = XMVectorGetX(XMVector3Length(XMLoadFloat3(&tileCenter) - XMLoadFloat3(&cameraPos)));
+    // Вычисляем расстояние от камеры до ближайшей точки bounding box
+    XMVECTOR cameraPosVec = XMLoadFloat3(&cameraPos);
+    XMVECTOR boxCenter = XMLoadFloat3(&node->boundingBox.Center);
 
+    // Более точное расстояние до bounding box
+    float distance = 0.0f;
+    node->boundingBox.Contains(cameraPosVec);
+
+    // Если камера внутри бокса, используем минимальное расстояние
+    if (distance > 0.0f) {
+        distance = 0.0f;
+    }
+    else {
+        distance = std::abs(distance);
+    }
 
     // Определяем должен ли узел быть разбит дальше
-    bool shouldSplit = (distance < lodTransitionDistance) && (node->depth < mMaxLOD);
+    bool shouldSplit = (distance < lodTransitionDistance * (node->depth + 1)) &&
+        (node->depth < mMaxLOD);
 
     if (shouldSplit && node->isLeaf) {
-        // Нужно разбить узел - создаем дочерние узлы
+        // Активируем дочерние узлы и скрываем родительский
         node->isLeaf = false;
-        float childSize = node->size * 0.5f;
-
-        //for (int i = 0; i < 4; ++i) {
-        //    if (!node->children[i]) {
-        //        node->children[i] = std::make_unique<QuadTreeNode>();
-        //        // ... инициализация дочернего узла аналогично BuildNode
-        //    }
-        //}
-
-        // Скрываем родительский тайл
         node->tile->isVisible = false;
+
+        // Активируем все дочерние тайлы
+        for (int i = 0; i < 4; ++i) {
+            if (node->children[i] && node->children[i]->tile) {
+                node->children[i]->tile->isVisible = true;
+            }
+        }
     }
     else if (!shouldSplit && !node->isLeaf) {
-        // Нужно свернуть узел - удаляем дочерние узлы
-        //node->isLeaf = true;
-        //for (int i = 0; i < 4; ++i) {
-        //    //node->children[i]//.reset();
-        //}
-
-        // Показываем родительский тайл
+        // Скрываем все дочерние тайлы и показываем родительский
+        HideChildrenTiles(node);
+        node->isLeaf = true;
         node->tile->isVisible = true;
     }
 
-    // Рекурсивно обновляем дочерние узлы
+    // Рекурсивно обновляем дочерние узлы (только если узел разбит)
     if (!node->isLeaf) {
         for (int i = 0; i < 4; ++i) {
             UpdateNodeLOD(node->children[i].get(), cameraPos, lodTransitionDistance);
+        }
+    }
+}
+
+// Вспомогательная функция для скрытия всех дочерних тайлов
+void Terrain::HideChildrenTiles(QuadTreeNode* node)
+{
+    if (!node) return;
+
+    for (int i = 0; i < 4; ++i) {
+        if (node->children[i]) {
+            if (node->children[i]->tile) {
+                node->children[i]->tile->isVisible = false;
+            }
+            // Рекурсивно скрываем всех потомков
+            HideChildrenTiles(node->children[i].get());
+        }
+    }
+}
+
+// Обновленная функция сбора видимых тайлов
+void Terrain::CollectVisibleTiles(QuadTreeNode* node, const BoundingFrustum& frustum, std::vector<Tile*>& visibleTiles)
+{
+    if (!node) return;
+
+    // Если узел видим и проходит фрустум-тест
+    if (node->tile && node->tile->isVisible) {
+        if (frustum.Intersects(node->boundingBox)) {
+            visibleTiles.push_back(node->tile);
+        }
+    }
+
+    // Рекурсивно проверяем дочерние узлы (только если узел активен и не является листом)
+    if (!node->isLeaf) {
+        for (int i = 0; i < 4; ++i) {
+            CollectVisibleTiles(node->children[i].get(), frustum, visibleTiles);
         }
     }
 }
