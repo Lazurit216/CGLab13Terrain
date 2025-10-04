@@ -22,9 +22,9 @@
 Texture2D gDiffuseMap : register(t0);
 Texture2D gNormalMap : register(t1);
 Texture2D gDispMap : register(t2);
-Texture2D gTerrDiffMap : register(t3);
-Texture2D gTerrNormMap : register(t4);
-Texture2D gTerrDispMap : register(t5);
+//Texture2D gTerrDiffMap : register(t3);
+//Texture2D gTerrNormMap : register(t4);
+//Texture2D gTerrDispMap : register(t5);
 
 // Constant data that varies per frame.
 cbuffer cbPerObject : register(b0)
@@ -33,17 +33,8 @@ cbuffer cbPerObject : register(b0)
     float4x4 gTexTransform;
 };
 
-// Constant data that varies per material.
-cbuffer cbMaterial : register(b1)
-{
-    float4 gDiffuseAlbedo;
-    float3 gFresnelR0;
-    float gRoughness;
-    float4x4 gMatTransform;
-};
-
 // Constant data that varies per pass.
-cbuffer cbPass : register(b2)
+cbuffer cbPass : register(b1)
 {
     float4x4 gView;
     float4x4 gInvView;
@@ -64,6 +55,15 @@ cbuffer cbPass : register(b2)
     
     float gScale;
     float gTessellationFactor;
+};
+
+// Constant data that varies per material.
+cbuffer cbMaterial : register(b2)
+{
+    float4 gDiffuseAlbedo;
+    float3 gFresnelR0;
+    float gRoughness;
+    float4x4 gMatTransform;
 };
 
 SamplerState gsamPointWrap : register(s0);
@@ -279,11 +279,4 @@ float4 PS(DS_OUTPUT pin) : SV_Target
     litColor.a = diffuseAlbedo.a; // Сохраняем альфу из текстуры
 
     return litColor;
-}
-
-float4 WirePS(DS_OUTPUT pin) : SV_Target
-{
-    return float4(1.f, 1.f, 1.f, 1.0f);
-    //return float4(0.87f, 0.f, 0.87f, 1.f); //fioletoviy
-    //return float4(0.24f, 0.67f, 0.24f, 1.0f);//сетка цвета влюбленной жабы
 }

@@ -281,6 +281,17 @@ void Camera::UpdateViewMatrix()
 
 		mViewDirty = false;
 	}
+	UpdateFrustum();
 }
 
+DirectX::BoundingFrustum Camera::GetFrustum() const { return mFrustum; }
 
+void Camera::UpdateFrustum() {
+	XMMATRIX P = GetProj();
+	BoundingFrustum::CreateFromMatrix(mFrustum, P);
+
+	XMMATRIX view = GetView();
+	XMVECTOR det;
+	XMMATRIX invView = XMMatrixInverse(&det, view);
+	mFrustum.Transform(mFrustum, invView);
+}

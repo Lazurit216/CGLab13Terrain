@@ -9,8 +9,8 @@ struct ObjectConstants
     DirectX::XMFLOAT4X4 World = MathHelper::Identity4x4();
 	DirectX::XMFLOAT4X4 TexTransform = MathHelper::Identity4x4();
 
-    float g_TessellationFactor;
-    float g_Scale;
+    //float g_TessellationFactor;
+    //float g_Scale;
 };
 
 struct PassConstants
@@ -38,32 +38,12 @@ struct PassConstants
     // are spot lights for a maximum of MaxLights per object.
     Light Lights[MaxLights];
 
-    //float gTessFactorMin = 1.f; // Минимальный фактор тесселяции ребер
-    //float gTessFactorMax = 10.f; // Максимальный фактор тесселяции ребер
-    //int gTessLevel = 1; // Фактор тесселяции внутри патча (можно тоже сделать динамическим)
-    //float gMaxTessDistance = 100.f; // Расстояние, на котором достигается мин. тесселяция
-    //float gDisplacementScale = 1.f; // Масштаб смещения
-    //int fixTessLevel = true;
-    //float DecalRadius = 2;         // 4 байта (Итого 16 байт)
-    //float DecalFalloffRadius = 6;  // 4 байта (Начинается с 16 байт)
-    //float DecalPadding;        // 4 байта (Начинается с 20 байт - чтобы выровнять?)
-    //DirectX::XMFLOAT3 decalPosition = { 0,0,0 };
-    //DirectX::XMFLOAT4X4 DecalViewProj;
-    //DirectX::XMFLOAT4X4 DecalTexTransform;
-    //float DecalPadding1;
-    //int isDecalVisible;
 
 
     float gScale = 1.f;
     float gTessellationFactor = 1.f;
 };
 
-//struct Vertex
-//{
-//    DirectX::XMFLOAT3 Pos;
-//    DirectX::XMFLOAT3 Normal;
-//	DirectX::XMFLOAT2 TexC;
-//};
 
 struct Vertex
 {
@@ -75,13 +55,21 @@ struct Vertex
     Vertex() {};
 };
 
+struct TileConstants
+{
+    DirectX::XMFLOAT3 TilePosition;
+    float TileSize;
+    float mapSize;
+    float hScale;
+};
+
 // Stores the resources needed for the CPU to build the command lists
 // for a frame.  
 struct FrameResource
 {
 public:
     
-    FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount);
+    FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount, UINT tileCount);
     FrameResource(const FrameResource& rhs) = delete;
     FrameResource& operator=(const FrameResource& rhs) = delete;
     ~FrameResource();
@@ -96,7 +84,7 @@ public:
     std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
     std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
     std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
-
+    std::unique_ptr<UploadBuffer<TileConstants>> TerrainCB = nullptr;
     // Fence value to mark commands up to this fence point.  This lets us
     // check if these frame resources are still in use by the GPU.
     UINT64 Fence = 0;
