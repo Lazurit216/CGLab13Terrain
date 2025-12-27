@@ -75,8 +75,6 @@ std::vector<Tile*>& Terrain::GetVisibleTiles()
     return mVisibleTiles;
 }
 
-float minHeight=-5;
-float maxHeight = 400;
 void Terrain::BuildTree()
 {
     //float halfSize = mWorldSize * 0.5f;
@@ -119,6 +117,70 @@ void Terrain::BuildNode(QuadTreeNode* node, float x, float z, int depth)
         BuildNode(child.get(), childX, childZ, depth +1);
     }
 }
+
+void Terrain::UpdateBoundainBoxes(XMFLOAT3 offset)
+{
+    if (!mRoot) return;
+
+    // Обновляем позицию корневого узла
+    XMFLOAT3 rootActualPos = XMFLOAT3(
+        mRoot->tile->worldPos.x + offset.x,
+        mRoot->tile->worldPos.y + offset.y,
+        mRoot->tile->worldPos.z + offset.z
+    );
+
+    // Обновляем bounding box корня
+    mRoot->boundingBox = CalculateAABB(rootActualPos, mWorldSize, minHeight, maxHeight);
+    mRoot->tile->boundingBox = mRoot->boundingBox;
+    //mRoot->tile->worldPos = rootActualPos; // Важно: обновляем позицию тайла!
+
+    // Рекурсивно обновляем дочерние узлы
+    RecurseUpdatingBB(mRoot.get(), rootActualPos);
+}
+
+void Terrain::RecurseUpdatingBB(QuadTreeNode* node, XMFLOAT3 parentPos)
+{
+    if (!node || !node->tile) return;
+
+    // Для корневого узла позиция уже вычислена, для дочерних - вычисляем
+    XMFLOAT3 actualPos;
+    if (node == mRoot.get())
+    {
+        actualPos = parentPos; // Корневой узел уже имеет правильную позицию
+    }
+    else
+    {
+        // Вычисляем позицию дочернего узла относительно родителя
+        float childSize = node->size;
+        // Находим смещение от родителя (предполагая что parentPos - центр родителя)
+        float parentSize = node->size * 2.0f; // Размер родителя в 2 раза больше
+        float offsetX = ((node->tile->worldPos.x - parentPos.x) / parentSize) * childSize;
+        float offsetZ = ((node->tile->worldPos.z - parentPos.z) / parentSize) * childSize;
+
+        actualPos = XMFLOAT3(
+            parentPos.x + offsetX,
+            parentPos.y,
+            parentPos.z + offsetZ
+        );
+
+        // Обновляем позицию тайла
+        //node->tile->worldPos = actualPos;
+    }
+
+    // Обновляем bounding box
+    node->boundingBox = CalculateAABB(actualPos, node->size, minHeight, maxHeight);
+    node->tile->boundingBox = node->boundingBox;
+
+    // Рекурсивно обновляем дочерние узлы
+    if (!node->isLeaf) {
+        for (int i = 0; i < 4; ++i) {
+            if (node->children[i] && node->children[i]->tile)
+            {
+                RecurseUpdatingBB(node->children[i].get(), actualPos);
+            }
+        }
+    }
+}
 BoundingBox Terrain::CalculateAABB(const XMFLOAT3& pos, float size, float minHeight, float maxHeight)
 {
     BoundingBox aabb;
@@ -146,61 +208,6 @@ void Terrain::CreateTileForNode(QuadTreeNode* node, float x, float z, int depth)
     node->tile = mAllTiles.back().get();
 }
 
-void Terrain::UpdateLOD(const XMFLOAT3& cameraPos, float lodTransitionDistance)
-{
-    UpdateNodeLOD(mRoot.get(), cameraPos, lodTransitionDistance);
-}
-
-void Terrain::UpdateNodeLOD(QuadTreeNode* node, const XMFLOAT3& cameraPos, float lodTransitionDistance)
-{
-    if (!node || !node->tile) return;
-
-    // Вычисляем расстояние от камеры до ближайшей точки bounding box
-    XMVECTOR cameraPosVec = XMLoadFloat3(&cameraPos);
-    XMVECTOR boxCenter = XMLoadFloat3(&node->boundingBox.Center);
-
-    // Более точное расстояние до bounding box
-    float distance = 0.0f;
-    node->boundingBox.Contains(cameraPosVec);
-
-    // Если камера внутри бокса, используем минимальное расстояние
-    if (distance > 0.0f) {
-        distance = 0.0f;
-    }
-    else {
-        distance = std::abs(distance);
-    }
-
-    // Определяем должен ли узел быть разбит дальше
-    bool shouldSplit = (distance < lodTransitionDistance * (node->depth + 1)) &&
-        (node->depth < mMaxLOD);
-
-    if (shouldSplit && node->isLeaf) {
-        // Активируем дочерние узлы и скрываем родительский
-        node->isLeaf = false;
-        node->tile->isVisible = false;
-
-        // Активируем все дочерние тайлы
-        for (int i = 0; i < 4; ++i) {
-            if (node->children[i] && node->children[i]->tile) {
-                node->children[i]->tile->isVisible = true;
-            }
-        }
-    }
-    else if (!shouldSplit && !node->isLeaf) {
-        // Скрываем все дочерние тайлы и показываем родительский
-        HideChildrenTiles(node);
-        node->isLeaf = true;
-        node->tile->isVisible = true;
-    }
-
-    // Рекурсивно обновляем дочерние узлы (только если узел разбит)
-    if (!node->isLeaf) {
-        for (int i = 0; i < 4; ++i) {
-            UpdateNodeLOD(node->children[i].get(), cameraPos, lodTransitionDistance);
-        }
-    }
-}
 
 // Вспомогательная функция для скрытия всех дочерних тайлов
 void Terrain::HideChildrenTiles(QuadTreeNode* node)

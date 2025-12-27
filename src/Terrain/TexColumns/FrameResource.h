@@ -40,8 +40,23 @@ struct PassConstants
 
 
 
+
     float gScale = 1.f;
     float gTessellationFactor = 1.f;
+
+};
+
+struct BrushConstants
+{
+    DirectX::XMFLOAT4 BrushColors = { 0.f, 0.f, 0.f, 1.f };
+
+    DirectX::XMFLOAT3 BrushWPos = { 0.f, 0.f, 0.f };
+    int isBrushMode = 0;
+    int isPainting = 0;
+    float BrushRadius = 30.f;
+    float BrushFalofRadius = 40.f;
+
+
 };
 
 
@@ -57,13 +72,19 @@ struct Vertex
 
 struct TileConstants
 {
+    // 16 bytes
     DirectX::XMFLOAT3 TilePosition;
     float TileSize;
+
+    // 16 bytes  
+    DirectX::XMFLOAT3 gTerrainOffset;
     float mapSize;
+
+    // 16 bytes
     float hScale;
-
     int showBoundingBox;
-
+    float Padding1;
+    float Padding2;
 };
 
 // Stores the resources needed for the CPU to build the command lists
@@ -72,7 +93,7 @@ struct FrameResource
 {
 public:
     
-    FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount, UINT tileCount);
+    FrameResource(ID3D12Device* device, UINT passCount, UINT objectCount, UINT materialCount, UINT tileCount, UINT brushCount);
     FrameResource(const FrameResource& rhs) = delete;
     FrameResource& operator=(const FrameResource& rhs) = delete;
     ~FrameResource();
@@ -88,6 +109,7 @@ public:
     std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
     std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
     std::unique_ptr<UploadBuffer<TileConstants>> TerrainCB = nullptr;
+    std::unique_ptr<UploadBuffer<BrushConstants>> BrushCB = nullptr;
     // Fence value to mark commands up to this fence point.  This lets us
     // check if these frame resources are still in use by the GPU.
     UINT64 Fence = 0;

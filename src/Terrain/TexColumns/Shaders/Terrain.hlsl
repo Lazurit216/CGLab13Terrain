@@ -43,8 +43,16 @@ cbuffer cbPass : register(b1)
     float4 gAmbientLight;
     Light gLights[MaxLights];
     
+    //int isBrushMode;
     float gScale;
     float gTessellationFactor;
+    //float BrushRadius;
+
+    //float BrushWPos;
+    //float BrushFalofRadius;
+
+    //float4 BrushColors;
+
 };
 
 // Constant data that varies per material.
@@ -58,12 +66,36 @@ cbuffer cbMaterial : register(b2)
 
 cbuffer cbTerrainTile : register(b3) 
 {
+    // 16 bytes
     float3 gTilePosition;
     float gTileSize;
+    
+    // 16 bytes  
+    float3 gTerrainOffset;
     float gMapSize;
+    
+    // 16 bytes
     float gHeightScale;
     int showBoundingBox;
+    float Padding1;
+    float Padding2;
 };
+
+cbuffer cbBrush : register(b4)
+{
+    
+    float4 BrushColors;
+
+    float3 BrushWPos;
+    int isBrushMode;
+    int isPainting;
+    float BrushRadius;
+    float BrushFalofRadius;
+
+}
+
+// UAV текстура для рисования
+//RWTexture2D<float4> gBrushTexture : register(u0);
 
 SamplerState gsamPointWrap : register(s0);
 SamplerState gsamPointClamp : register(s1);
@@ -106,7 +138,7 @@ VertexOut VS(VertexIn vin)
     float height = gTerrDispMap.SampleLevel(gsamLinearClamp, vout.TexC, 0).r;
     vout.height = height;
     
-    float3 posL = vin.PosL;
+    float3 posL = vin.PosL+gTerrainOffset;
     posL.y = posL.y + height * gHeightScale;
 
     float4 posW = mul(float4(posL, 1.0f), gWorld);
@@ -159,6 +191,40 @@ float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, floa
     return bumpedNormalW;
 }
 
+float4 GetBrushColor(VertexOut pin)
+{
+    // Инициализируем ПРОЗРАЧНЫМ цветом!
+    float4 Color = float4(0., 0., 0., 0.); // <-- ИСПРАВЛЕНО!
+    float distanceToBrush = distance(pin.PosW.xz, BrushWPos.xz);
+    float radius = BrushRadius + BrushFalofRadius;
+
+    if (distanceToBrush <= radius)
+    {
+        // Вычисляем интенсивность кисти с плавным затуханием
+        float brushIntensity = 0.0f;
+            
+        if (distanceToBrush <= BrushRadius)
+        {
+            // Внутренний радиус - полная интенсивность
+            brushIntensity = 1.0f; // <-- УБРАЛ умножение на BrushColors!
+        }
+        else
+        {
+            // Область затухания (falloff)
+            float falloffDistance = distanceToBrush - BrushRadius;
+            brushIntensity = 1.0f - smoothstep(0.0f, BrushFalofRadius, falloffDistance);
+        }
+            
+        // Создаем цвет кисти
+        float4 brushColor = float4(BrushColors.rgb, brushIntensity * BrushColors.a);
+            
+        // Поскольку Color = 0, это просто присваивание brushColor
+        Color = brushColor; // Или Color = lerp(float4(0,0,0,0), brushColor, brushColor.a);
+    }
+    
+    return Color;
+}
+
 float4 ShowBoundainBoxes(VertexOut pin) : SV_Target
 {
     if (showBoundingBox == 1)
@@ -190,9 +256,10 @@ float4 ShowBoundainBoxes(VertexOut pin) : SV_Target
 
 float4 PS(VertexOut pin) : SV_Target
 {
-        // Сначала проверяем границы
+    // Сначала проверяем границы
     float4 borderColor = ShowBoundainBoxes(pin);
-    if (borderColor.a > 0.5)  return borderColor;
+    if (borderColor.a > 0.5)  
+        return borderColor;
     
     float4 diffuseAlbedo = gTerrDiffMap.Sample(gsamAnisotropicWrap, pin.TexC);
     diffuseAlbedo *= gDiffuseAlbedo;
@@ -209,13 +276,56 @@ float4 PS(VertexOut pin) : SV_Target
     float4 ambient = gAmbientLight * diffuseAlbedo;
 
     const float shininess = 1.0f - gRoughness;
-    Material mat = { diffuseAlbedo, gFresnelR0, shininess }; 
+    Material mat = { diffuseAlbedo, gFresnelR0, shininess };
 
-    float3 directLight = ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.f); 
+    float3 directLight = ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.f);
     float4 litColor = ambient + float4(directLight, 0.0f);
 
-    litColor.a = diffuseAlbedo.a; 
+    litColor.a = diffuseAlbedo.a;
+    
+    if (isBrushMode == 1)
+    {
+        /*float distanceToBrush = distance(pin.PosW.xz, BrushWPos.xz);
+        float radius = BrushRadius + BrushFalofRadius; 
 
+        if (distanceToBrush <= radius)
+        {
+            // Вычисляем интенсивность кисти с плавным затуханием
+            float brushIntensity = 0.0f;
+            
+            if (distanceToBrush <= BrushRadius)
+            {
+                // Внутренний радиус - полная интенсивность
+                brushIntensity = 1.0f*BrushColors;
+            }
+            else
+            {
+                // Область затухания (falloff)
+                float falloffDistance = distanceToBrush - BrushRadius;
+                brushIntensity = 1.0f - smoothstep(0.0f, BrushFalofRadius, falloffDistance);
+            }*/
+            
+            // Создаем цвет кисти
+        float4 brushColor = GetBrushColor(pin); //float4(BrushColors.rgb, brushIntensity*BrushColors.a);//  * 0.7f);
+            
+            // Смешиваем с основным цветом
+        litColor = lerp(litColor, brushColor, brushColor.a);
+            
+
+        //}
+        // Дополнительно: рисуем контур кисти
+        float outlineWidth = 2.0f;
+        float distanceToBrush = distance(pin.PosW.xz, BrushWPos.xz);
+        float radius = BrushRadius + BrushFalofRadius;
+        if (abs(distanceToBrush - radius) < outlineWidth)
+        {
+            // Белый контур
+            float outlineIntensity = 1.0f - abs(distanceToBrush - radius) / outlineWidth;
+            litColor.rgb = lerp(litColor.rgb, float3(.4f, .7f, 1.f), outlineIntensity * 0.8f);
+        }
+        
+    }
+    // =========================================
     return litColor;
 }
 

@@ -38,15 +38,17 @@ public:
 	std::vector<std::shared_ptr<Tile>>& GetAllTiles();
 	std::vector<Tile*>& GetVisibleTiles();
 	void BuildTree();
-	void UpdateLOD(const XMFLOAT3& cameraPos, float lodTransitionDistance);
+	void UpdateBoundainBoxes(XMFLOAT3 offset);
+	//void UpdateLOD(const XMFLOAT3& cameraPos, float lodTransitionDistance);
 
 private:
 	void CreateTileForNode(QuadTreeNode* node, float x, float z, int depth);
 	void BuildNode(QuadTreeNode* node, float x, float z, int depth);
 	void CollectVisibleTiles(QuadTreeNode* node, const DirectX::BoundingFrustum& frustum, std::vector<Tile*>& visibleTiles);
-	void UpdateNodeLOD(QuadTreeNode* node, const XMFLOAT3& cameraPos, float lodTransitionDistance);
+	//void UpdateNodeLOD(QuadTreeNode* node, const XMFLOAT3& cameraPos, float lodTransitionDistance);
 	void HideChildrenTiles(QuadTreeNode* node);
 	BoundingBox CalculateAABB(const XMFLOAT3& pos, float size, float minHeight, float maxHeight);
+	void RecurseUpdatingBB(QuadTreeNode* node, XMFLOAT3 actualPos);
 
 public:
 	float mWorldSize;
@@ -62,5 +64,7 @@ private:
 	std::vector<Tile*> mVisibleTiles;
 	int mMaxLOD;
 	int tileIndex = 0;
+	float minHeight = -5;// +mTerrainOffset.y;
+	float maxHeight = 400;// +mTerrainOffset.y;
 };
 

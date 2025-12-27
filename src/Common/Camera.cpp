@@ -204,6 +204,7 @@ void Camera::MoveUp(float d)
 	XMVECTOR s = XMVectorReplicate(d);
 	XMVECTOR u = XMLoadFloat3(&mUp);
 	XMVECTOR p = XMLoadFloat3(&mPosition);
+	//XMVECTOR z = XMLoadFloat3((0,0,0));
 	XMStoreFloat3(&mPosition, XMVectorMultiplyAdd(s, u, p));
 
 	mViewDirty = true;

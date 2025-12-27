@@ -22,7 +22,7 @@ using namespace DirectX::PackedVector;
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
 
-const int gNumFrameResources = 3;
+const int gNumFrameResources = 6;
 
 // Lightweight structure stores parameters to draw a shape.  This will
 // vary from app-to-app.
@@ -50,7 +50,7 @@ struct RenderItem
 
 	Material* Mat = nullptr;
 	MeshGeometry* Geo = nullptr;
-
+	MeshGeometry* mDebugGeo = nullptr;
 	// Primitive topology.
 	D3D12_PRIMITIVE_TOPOLOGY PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 
@@ -85,20 +85,26 @@ private:
 	void UpdateObjectCBs(const GameTimer& gt);
 	void UpdateMaterialCBs(const GameTimer& gt);
 	void UpdateMainPassCB(const GameTimer& gt);
+	void UpdateBrushCB(const GameTimer& gt);
 
 	void LoadDDSTexture(std::string name, std::wstring filename);
 	void LoadTextures();
+	void CreateBrushTexture(CD3DX12_CPU_DESCRIPTOR_HANDLE baseDescriptorHandle, int baseOffset);
 	void BuildRootSignature();
 
+	void BuildCsRootSignature();
 	void BuildTerrainRootSignature();
+	void BuildDebugRootSignature();
+
 
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
 	void BuildShapeGeometry();
-
-	void CreateBoundingBoxMesh(const BoundingBox& bbox, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices);
 	void BuildDebugGeometry();
-	void RenderBoundingBoxes();
+
+	//void CreateBoundingBoxMesh(const BoundingBox& bbox, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices);
+	//void BuildDebugGeometry();
+	//void RenderBoundingBoxes();
 
 	void GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSize, int lodLevel, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices);
 	void BuildTerrainGeometry();
@@ -117,9 +123,12 @@ private:
 	void InitImGui();
 	void SetupImGui();
 
+	bool ScreenToWorld(int screenX, int screenY, XMFLOAT3& worldPos);
+
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
 private:
+	XMMATRIX mInvViewProj;
 
 	std::vector<std::unique_ptr<FrameResource>> mFrameResources;
 	FrameResource* mCurrFrameResource = nullptr;
@@ -132,18 +141,35 @@ private:
 	ComPtr<ID3D12RootSignature> mRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mTerrainRootSignature = nullptr;
 
+	// Compute Shader PSO
+	//Microsoft::WRL::ComPtr<ID3D12PipelineState> mBrushComputePSO;
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> mBrushComputeRootSignature;
+	Microsoft::WRL::ComPtr<ID3D12RootSignature> mDebugRootSignature;
+
+	Microsoft::WRL::ComPtr<ID3D12Resource> mBrushTexture;
+	Microsoft::WRL::ComPtr<ID3D12Resource> mBrushTextureUpload;
+	D3D12_CPU_DESCRIPTOR_HANDLE mBrushTextureSRV;
+	D3D12_CPU_DESCRIPTOR_HANDLE mBrushTextureUAV;
+
+	int mBrushTextureSRVIndex = 0;
+	int mBrushTextureUAVIndex = 0;
+	UINT mBrushTextureWidth = 1024;
+	UINT mBrushTextureHeight = 1024;
+
 	ComPtr<ID3D12DescriptorHeap> mSrvDescriptorHeap = nullptr;
 
 	ComPtr<ID3D12DescriptorHeap> mImGuiSrvDescriptorHeap;
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
+	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mDebugGeometries;
+	
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
 	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
 	std::unordered_map<std::string, ComPtr<ID3DBlob>> mShaders;
 	std::unordered_map<std::string, ComPtr<ID3D12PipelineState>> mPSOs;
 
 	std::vector<D3D12_INPUT_ELEMENT_DESC> mInputLayout;
-	std::vector<D3D12_INPUT_ELEMENT_DESC> debugInputLayout;
+	std::vector<D3D12_INPUT_ELEMENT_DESC> mDebugInputLayout;
 
 	// List of all the render items.
 	std::vector<std::unique_ptr<RenderItem>> mAllRitems;
@@ -153,7 +179,7 @@ private:
 	std::vector<RenderItem*> mOpaqueRitems;
 
 	PassConstants mMainPassCB;
-
+	BrushConstants mBrushCB;
 
 	POINT mLastMousePos;
 
@@ -167,8 +193,22 @@ private:
 
 	std::unique_ptr<Terrain> mTerrain;
 	int mMaxLOD = 5;
-	XMFLOAT3 terrainOffset = XMFLOAT3(0.f, -100, 0.f);
+	XMFLOAT3 terrainPos = XMFLOAT3(0.f, -100, 0.f);
+	XMFLOAT3 terrainOffset = XMFLOAT3(0.f, 0.f, 0.f);
+	float mTerrainSize = 1024;
 	std::vector<Tile*> mVisibleTiles;
+
+	float mCameraVertSpeed = 400;
+	float mCameraHorSpeed = 400;
+
+	int controlMode = 0; //0 - camera, 1 - terrain brush 
+
+	//XMFLOAT3 BrushWPos;
+	XMFLOAT4 BrushColor = {1.f, 1.f, 1.f, 1.f};
+	float BrushRadius=30;
+	float BrushFalloffRadius=40;
+	int mIsPainting = 0;
+	bool mShowDebugTexture = true;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -218,17 +258,21 @@ bool TexColumnsApp::Initialize()
 	// so we have to query this information.
 	mCbvSrvDescriptorSize = md3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-	mCamera.SetPosition(0.0f, 2.0f, 0.f);
+	mCamera.SetPosition(0.0f, 300.0f, 0.f);
 
 	LoadTextures();
+	//CreateBrushTexture();
 	BuildRootSignature();
 	BuildTerrainRootSignature();
+	BuildCsRootSignature();
 	BuildDescriptorHeaps();
+	BuildDebugRootSignature();
 
 	InitTerrain();
 
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
+	BuildDebugGeometry();
 
 	BuildTerrainGeometry();
 
@@ -253,7 +297,7 @@ bool TexColumnsApp::Initialize()
 void TexColumnsApp::InitTerrain()
 {
 	mTerrain = std::make_unique<Terrain>();
-	mTerrain->Initialize(md3dDevice.Get(), 1024, mMaxLOD, terrainOffset);
+	mTerrain->Initialize(md3dDevice.Get(), mTerrainSize, mMaxLOD, terrainPos);
 }
 
 void TexColumnsApp::InitImGui()
@@ -300,6 +344,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	OnKeyboardInput(gt);
 
 	// Cycle through the circular frame resource array.
+
 	mCurrFrameResourceIndex = (mCurrFrameResourceIndex + 1) % gNumFrameResources;
 	mCurrFrameResource = mFrameResources[mCurrFrameResourceIndex].get();
 
@@ -318,9 +363,12 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateTerrain(gt);
 
 	AnimateMaterials(gt);
+
 	UpdateObjectCBs(gt);
 	UpdateTerrainCBs(gt);
+
 	UpdateMainPassCB(gt);
+	UpdateBrushCB(gt);
 	UpdateMaterialCBs(gt);
 }
 
@@ -340,6 +388,14 @@ void TexColumnsApp::SetupImGui()
 
 	ImGui::Separator();
 
+	ImGui::Text("Camera speed:");
+	XMFLOAT2 speed = XMFLOAT2(mCameraHorSpeed, mCameraVertSpeed);
+	ImGui::DragFloat2("##Speed:", &speed.x, 1.f, 10.f, 9999.f, "%.1f");
+	mCameraHorSpeed = speed.x;
+	mCameraVertSpeed = speed.y;
+
+	ImGui::Separator();
+
 	ImGui::Text("Tesselation:");
 	ImGui::Text("Scale:");
 	ImGui::DragFloat("##Scale", &mScale, 0.1f, 0.0f, 10, "%.3f");
@@ -349,11 +405,33 @@ void TexColumnsApp::SetupImGui()
 	ImGui::Separator();
 
 	ImGui::Text("Terrain:");
-	//ImGui::DragFloat3("Terrain offset", &terrainOffset.x, 1.0f, -100.0f, 100.0f);
+	ImGui::Text("Visible Tiles: %d", mTerrain->GetVisibleTiles().size());
+	ImGui::Text("Total Tiles: %d", mTerrain->GetAllTiles().size());
+	//ImGui::DragFloat3("Terrain offset", &terrainOffset.x, 1.0f, -1000.0f, 1000.0f);
 	ImGui::Checkbox("Show Bounding Box", &showTilesBoundingBox);
+	ImGui::Checkbox("Show Debug Texture", &mShowDebugTexture);
+	
+	ImGui::SetWindowSize(ImVec2(300, 500)); // ������, ������
+	ImGui::SetWindowPos(ImVec2(5, 5));   // X, Y �������
 
-	ImGui::SetWindowSize(ImVec2(300, 500)); // ������, ������
-	ImGui::SetWindowPos(ImVec2(5, 5));   // X, Y �������
+	ImGui::Separator();
+
+	ImGui::Text("Control mode:");
+
+	ImGui::RadioButton("Camera", &controlMode, 0); ImGui::SameLine();
+	ImGui::RadioButton("Terrain Brush", &controlMode, 1); //ImGui::SameLine();
+	//ImGui::RadioButton("radio c", &e, 2);
+
+	ImGui::Separator();
+
+	ImGui::Text("Brush settings:");
+	ImGui::SliderFloat("Radius", &BrushRadius, 1.f, 500.f, "%.1f");
+	ImGui::SliderFloat("Falloff radius", &BrushFalloffRadius, 0.f, 500.f, "%.1f");
+	//ImGui::DragFloat("Radius", &BrushRadius, 1.f, 1.f, 500.f, "%.1f");
+	//ImGui::DragFloat("Falloff radius", &BrushFalloffRadius, 1.f, 0.f, 500.f, "%.1f");
+	static float col[4] = { 1.f, 1.f, 1.f, 1.f };
+	ImGui::ColorEdit4("Color", col);
+	BrushColor = {col[0], col[1], col[2], col[3]};
 
 	ImGui::End();
 
@@ -382,7 +460,7 @@ void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 {
 	if (!ImGui::GetIO().WantCaptureMouse)
 	{
-		if ((btnState & MK_LBUTTON) != 0)
+		if ((btnState & MK_RBUTTON) != 0)
 		{
 			// Make each pixel correspond to a quarter of a degree.
 			float dx = XMConvertToRadians(0.25f * static_cast<float>(x - mLastMousePos.x));
@@ -391,6 +469,40 @@ void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 			mCamera.Pitch(dy);
 			mCamera.RotateY(dx);
 		}
+		//Control mode HERE
+		switch (controlMode)
+		{
+		case 0:
+
+			break;
+		case 1:
+			if ((btnState & MK_RBUTTON) == 0)
+			{
+				mIsPainting = (btnState & MK_LBUTTON) == 0 ? 0 : 1;
+				XMFLOAT3 worldPos;
+				if (ScreenToWorld(x, y, worldPos))
+				{
+					mBrushCB.BrushWPos = worldPos;
+					// Отладочный вывод выбранной позиции
+					std::string debugMsg = "Decal placed at: X=" +
+						std::to_string(worldPos.x) +
+						", Y=" + std::to_string(worldPos.y) +
+						", Z=" + std::to_string(worldPos.z) +
+						"\n";
+					OutputDebugStringA(debugMsg.c_str());
+				}
+				else
+				{
+					OutputDebugStringA("Decal hidden: click missed the plane\n");
+				}
+
+
+			}
+			break;
+		default:
+			break;
+		}
+		
 
 		mLastMousePos.x = x;
 		mLastMousePos.y = y;
@@ -401,29 +513,97 @@ void TexColumnsApp::OnMouseMove(WPARAM btnState, int x, int y)
 void TexColumnsApp::OnKeyboardInput(const GameTimer& gt)
 {
 	const float dt = gt.DeltaTime();
-	float horizSpeed = 200.f;
-	float vertSpeed = 100.f;
+
 	bool shiftPressed = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
 
 	if (GetAsyncKeyState('W') & 0x8000)
 	{
-		if (shiftPressed) mCamera.MoveUp(vertSpeed * dt);
-		else mCamera.Walk(horizSpeed * dt);
+		if (shiftPressed) mCamera.MoveUp(mCameraVertSpeed * dt);
+		else mCamera.Walk(mCameraHorSpeed * dt);
 	}
 
 	if (GetAsyncKeyState('S') & 0x8000)
 	{
-		if (shiftPressed) mCamera.MoveUp(-vertSpeed * dt);
-		else mCamera.Walk(-horizSpeed * dt);
+		if (shiftPressed) mCamera.MoveUp(-mCameraVertSpeed * dt);
+		else mCamera.Walk(-mCameraHorSpeed * dt);
 	}
 
 	if (GetAsyncKeyState('A') & 0x8000)
-		mCamera.Strafe(-horizSpeed * dt);
+		mCamera.Strafe(-mCameraHorSpeed * dt);
 
 	if (GetAsyncKeyState('D') & 0x8000)
-		mCamera.Strafe(horizSpeed * dt);
+		mCamera.Strafe(mCameraHorSpeed * dt);
 
 	mCamera.UpdateViewMatrix();
+}
+
+
+bool TexColumnsApp::ScreenToWorld(int screenX, int screenY, XMFLOAT3& worldPos)
+{
+	// 1. Нормализованные координаты экрана [-1, 1]
+	float nx = (2.0f * static_cast<float>(screenX)) / mClientWidth - 1.0f;
+	float ny = 1.0f - (2.0f * static_cast<float>(screenY)) / mClientHeight;
+
+	// 2. Создаем луч в clip space
+	XMVECTOR rayStart = XMVectorSet(nx, ny, 0.0f, 1.0f);
+	XMVECTOR rayEnd = XMVectorSet(nx, ny, 1.0f, 1.0f);
+
+	// 3. Получаем обратную матрицу ViewProj
+	//XMMATRIX viewProj = XMMatrixMultiply(mCamera.GetView(), mCamera.GetProj());
+	XMMATRIX invViewProj = mInvViewProj;//XMMatrixInverse(nullptr, viewProj);
+
+	// 4. Преобразуем в мировые координаты
+	rayStart = XMVector3TransformCoord(rayStart, invViewProj);
+	rayEnd = XMVector3TransformCoord(rayEnd, invViewProj);
+
+	XMFLOAT3 startPos, endPos;
+	XMStoreFloat3(&startPos, rayStart);
+	XMStoreFloat3(&endPos, rayEnd);
+
+	// 5. Направление луча
+	XMVECTOR rayDir = XMVectorSubtract(rayEnd, rayStart);
+	rayDir = XMVector3Normalize(rayDir);
+	
+	// Проверяем пересечение луча с AABB террейна
+	float distance;
+
+	std::string debugMsg;;
+
+	XMVECTOR planeNormal = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+	XMVECTOR planePoint = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
+
+	XMVECTOR diff = XMVectorSubtract(planePoint, rayStart);
+	float numerator = XMVectorGetX(XMVector3Dot(diff, planeNormal));
+	float denominator = XMVectorGetX(XMVector3Dot(rayDir, planeNormal));
+
+	debugMsg = "Plane intersection calc: numerator=" + std::to_string(numerator) +
+		", denominator=" + std::to_string(denominator) + "\n";
+	OutputDebugStringA(debugMsg.c_str());
+
+	if (fabs(denominator) > 1e-6f)
+	{
+		float t = numerator / denominator;
+
+		if (t >= 0.0f)
+		{
+			XMVECTOR intersection = XMVectorAdd(rayStart, XMVectorScale(rayDir, t));
+			XMFLOAT3 intersectPos;
+			XMStoreFloat3(&intersectPos, intersection);
+
+			// Проверяем границы террейна в плоскости XZ
+			if (intersectPos.x >= terrainPos.x && intersectPos.x <= terrainPos.x + mTerrainSize &&
+				intersectPos.z >= terrainPos.z && intersectPos.z <= terrainPos.z + mTerrainSize)
+			{
+				worldPos = intersectPos;
+				debugMsg = "HIT: Projected to terrain plane at Y=" + std::to_string(intersectPos.y) + "\n";
+				OutputDebugStringA(debugMsg.c_str());
+				return true;
+			}
+		}
+	}
+
+	OutputDebugStringA("MISS: No intersection with terrain bounds\n");
+	return false;
 }
 
 void TexColumnsApp::AnimateMaterials(const GameTimer& gt)
@@ -498,14 +678,14 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	XMMATRIX viewProj = XMMatrixMultiply(view, proj);
 	XMMATRIX invView = XMMatrixInverse(&XMMatrixDeterminant(view), view);
 	XMMATRIX invProj = XMMatrixInverse(&XMMatrixDeterminant(proj), proj);
-	XMMATRIX invViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
+    mInvViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
 
 	XMStoreFloat4x4(&mMainPassCB.View, XMMatrixTranspose(view));
 	XMStoreFloat4x4(&mMainPassCB.InvView, XMMatrixTranspose(invView));
 	XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
-	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(invViewProj));
+	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(mInvViewProj));
 	mMainPassCB.EyePosW = mCamera.GetPosition3f();
 	mMainPassCB.RenderTargetSize = XMFLOAT2((float)mClientWidth, (float)mClientHeight);
 	mMainPassCB.InvRenderTargetSize = XMFLOAT2(1.0f / mClientWidth, 1.0f / mClientHeight);
@@ -525,8 +705,21 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.gScale = mScale;
 	mMainPassCB.gTessellationFactor = mTessellationFactor;
 
+
+
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
+}
+void TexColumnsApp::UpdateBrushCB(const GameTimer& gt)
+{
+	mBrushCB.BrushRadius = BrushRadius;
+	mBrushCB.BrushFalofRadius = BrushFalloffRadius;
+	mBrushCB.BrushColors = BrushColor;
+	mBrushCB.isBrushMode = controlMode == 1 ? 1 : 0;
+	mBrushCB.isPainting = mIsPainting == 1 ? 1 : 0;
+
+	auto currBrushCB = mCurrFrameResource->BrushCB.get();
+	currBrushCB->CopyData(0, mBrushCB);
 }
 
 void TexColumnsApp::UpdateTerrainCBs(const GameTimer& gt)
@@ -537,6 +730,7 @@ void TexColumnsApp::UpdateTerrainCBs(const GameTimer& gt)
 	    TileConstants tileConstants;
 
 		tileConstants.TilePosition = tile->worldPos;
+		tileConstants.gTerrainOffset = terrainOffset;
 		tileConstants.TileSize = tile->tileSize;
 		tileConstants.mapSize = mTerrain->mWorldSize;
 		tileConstants.hScale = mTerrain->mHeightScale;
@@ -556,7 +750,7 @@ void TexColumnsApp::UpdateTerrain(const GameTimer& gt)
 
 
 	mTerrain->Update(mCamera.GetPosition3f(), mCamera.GetFrustum());
-
+	//mTerrain->UpdateBoundainBoxes(terrainOffset);
 	//auto& visibleTiles = mTerrain->GetVisibleTiles();
 	//for (auto& tile : visibleTiles)
 	//{
@@ -586,16 +780,18 @@ void TexColumnsApp::LoadTextures()
 	LoadDDSTexture("terrainDisp", L"../../Textures/terrain_disp.dds");
 }
 
+
+
 void TexColumnsApp::BuildRootSignature()
 {
 	CD3DX12_DESCRIPTOR_RANGE diffuseRange;
-	diffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // ��������� �������� � �������� t0
+	diffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // ��������� �������� � �������� t0
 
 	CD3DX12_DESCRIPTOR_RANGE normalRange;
-	normalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);  // ���������� ����� � �������� t1
+	normalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);  // ���������� ����� � �������� t1
 
 	CD3DX12_DESCRIPTOR_RANGE dispMap;
-	dispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Dispmap � �������� t2
+	dispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Dispmap � �������� t2
 
 	// Root parameter can be a table, root descriptor or root constants.
 	CD3DX12_ROOT_PARAMETER slotRootParameter[6];
@@ -638,6 +834,8 @@ void TexColumnsApp::BuildRootSignature()
 //TERREAIN ROOT SIGNATURE
 void TexColumnsApp::BuildTerrainRootSignature()
 {
+	
+
 	CD3DX12_DESCRIPTOR_RANGE TerrainDiffuseRange;
 	TerrainDiffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1,0);  // Terrain diff t0
 
@@ -645,23 +843,34 @@ void TexColumnsApp::BuildTerrainRootSignature()
 	TerrainNormalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);  // Terrain norm t1
 
 	CD3DX12_DESCRIPTOR_RANGE TerrainDispMap;
-	TerrainDispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Terrain Disp (HeightMap) t3
+	TerrainDispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Terrain Disp (HeightMap) t2
 
-	CD3DX12_ROOT_PARAMETER slotRootParameter[7];
+	// ДОБАВИТЬ UAV для кисти
+	CD3DX12_DESCRIPTOR_RANGE brushUAVRange;
+	brushUAVRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);  // u0
 
-	slotRootParameter[0].InitAsDescriptorTable(1, &TerrainDiffuseRange, D3D12_SHADER_VISIBILITY_ALL); // t0
-	slotRootParameter[1].InitAsDescriptorTable(1, &TerrainNormalRange, D3D12_SHADER_VISIBILITY_ALL);  // t1
-	slotRootParameter[2].InitAsDescriptorTable(1, &TerrainDispMap, D3D12_SHADER_VISIBILITY_ALL);      // t2
+	// УВЕЛИЧИТЬ массив до 8 параметров
+	CD3DX12_ROOT_PARAMETER slotRootParameter[8];
 
-	slotRootParameter[3].InitAsConstantBufferView(0); // register b0
-	slotRootParameter[4].InitAsConstantBufferView(1); // register b1
-	slotRootParameter[5].InitAsConstantBufferView(2); // register b2
-	slotRootParameter[6].InitAsConstantBufferView(3); // register b3
+	// SRV текстуры
+	slotRootParameter[0].InitAsDescriptorTable(1, &TerrainDiffuseRange, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParameter[1].InitAsDescriptorTable(1, &TerrainNormalRange, D3D12_SHADER_VISIBILITY_PIXEL);
+	slotRootParameter[2].InitAsDescriptorTable(1, &TerrainDispMap, D3D12_SHADER_VISIBILITY_ALL);
+
+	// CBV
+	slotRootParameter[3].InitAsConstantBufferView(0); // b0
+	slotRootParameter[4].InitAsConstantBufferView(1); // b1
+	slotRootParameter[5].InitAsConstantBufferView(2); // b2
+	slotRootParameter[6].InitAsConstantBufferView(3); // b3
+
+	// ДОБАВИТЬ: cbBrush (b4) и UAV для кисти
+	slotRootParameter[7].InitAsConstantBufferView(4); // b4 - cbBrush
+
+	// НЕ добавляем UAV в графическую root signature - это только для compute!
 
 	auto staticSamplers = GetStaticSamplers();
 
-	// A root signature is an array of root parameters.
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(7, slotRootParameter,
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(8, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
@@ -682,6 +891,95 @@ void TexColumnsApp::BuildTerrainRootSignature()
 		serializedRootSig->GetBufferPointer(),
 		serializedRootSig->GetBufferSize(),
 		IID_PPV_ARGS(mTerrainRootSignature.GetAddressOf())));
+
+
+}
+
+void TexColumnsApp::BuildCsRootSignature()
+{
+	// 1. SRV для карты высот (t0)
+	CD3DX12_DESCRIPTOR_RANGE srvTable;
+	srvTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
+
+	// 2. UAV для текстуры кисти (u0)
+	CD3DX12_DESCRIPTOR_RANGE uavTable;
+	uavTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0); // u0
+
+	// 3. Root параметры
+	CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+
+	// b0: BrushCB
+	slotRootParameter[0].InitAsConstantBufferView(0);
+
+	// b1: TerrainCB  
+	slotRootParameter[1].InitAsConstantBufferView(1);
+
+	// t0: Карта высот (SRV)
+	slotRootParameter[2].InitAsDescriptorTable(1, &srvTable, D3D12_SHADER_VISIBILITY_ALL);
+
+	// u0: Текстура кисти (UAV)
+	slotRootParameter[3].InitAsDescriptorTable(1, &uavTable, D3D12_SHADER_VISIBILITY_ALL);
+
+	auto staticSamplers = GetStaticSamplers();
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(4, slotRootParameter,
+		(UINT)staticSamplers.size(), staticSamplers.data(),
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		&serializedRootSig, &errorBlob);
+
+	if (errorBlob != nullptr)
+		OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(mBrushComputeRootSignature.GetAddressOf())));
+}
+
+void TexColumnsApp::BuildDebugRootSignature()
+{
+	CD3DX12_DESCRIPTOR_RANGE texTable;
+	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
+
+	CD3DX12_ROOT_PARAMETER slotRootParameter[1];
+	slotRootParameter[0].InitAsDescriptorTable(1, &texTable, D3D12_SHADER_VISIBILITY_PIXEL);
+
+	// Сэмплер
+	CD3DX12_STATIC_SAMPLER_DESC pointClamp(
+		0, // register 0
+		D3D12_FILTER_MIN_MAG_MIP_POINT,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+		D3D12_TEXTURE_ADDRESS_MODE_CLAMP);
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(1, slotRootParameter,
+		1, &pointClamp,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		&serializedRootSig, &errorBlob);
+
+	if (errorBlob != nullptr)
+		OutputDebugStringA((char*)errorBlob->GetBufferPointer());
+
+	ThrowIfFailed(hr);
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(mDebugRootSignature.GetAddressOf())));
 }
 
 void TexColumnsApp::BuildDescriptorHeaps()
@@ -690,9 +988,27 @@ void TexColumnsApp::BuildDescriptorHeaps()
 	// Create the SRV heap.
 	//
 	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
-	srvHeapDesc.NumDescriptors = mTextures.size(); // �������� �������� + 2 �������������� ��� ������
+	srvHeapDesc.NumDescriptors = mTextures.size() + 2; // Все текстуры + SRV кисти + UAV кисти
 	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+	char msg[256];
+	sprintf_s(msg, "Building descriptor heap with %d descriptors\n", srvHeapDesc.NumDescriptors);
+	OutputDebugStringA(msg);
+
+	// Вывод информации о текстурах перед созданием
+	sprintf_s(msg, "Total textures in mTextures: %zu\n", mTextures.size());
+	OutputDebugStringA(msg);
+
+	int texIndex = 0;
+	for (const auto& tex : mTextures) {
+		sprintf_s(msg, "Texture %d: %s (has resource: %s)\n",
+			texIndex++,
+			tex.first.c_str(),
+			(tex.second && tex.second->Resource) ? "YES" : "NO");
+		OutputDebugStringA(msg);
+	}
+
 	ThrowIfFailed(md3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&mSrvDescriptorHeap)));
 
 	//
@@ -706,23 +1022,171 @@ void TexColumnsApp::BuildDescriptorHeaps()
 
 	int offset = 0;
 
-	// ������� ������� ����������� ��� �������� �������
+	// Создаем дескрипторы для всех обычных текстур
+	OutputDebugStringA("\nCreating SRV descriptors:\n");
 	for (const auto& tex : mTextures) {
 		if (!tex.second || !tex.second->Resource) {
-			OutputDebugStringA(("Missing texture: " + tex.first + "\n").c_str());
+			sprintf_s(msg, "Skipping texture %s: missing resource\n", tex.first.c_str());
+			OutputDebugStringA(msg);
 			continue;
 		}
 
 		auto text = tex.second->Resource;
 		srvDesc.Format = text->GetDesc().Format;
 		srvDesc.Texture2D.MipLevels = text->GetDesc().MipLevels;
+
+		// Сохраняем информацию о создаваемом дескрипторе
+		sprintf_s(msg, "  Offset %d: %s (Format: %d, Mips: %d)\n",
+			offset, tex.first.c_str(), srvDesc.Format, srvDesc.Texture2D.MipLevels);
+		OutputDebugStringA(msg);
+
 		md3dDevice->CreateShaderResourceView(text.Get(), &srvDesc, hDescriptor);
-		hDescriptor.Offset(1, mCbvSrvDescriptorSize);
+
 		TexOffsets[tex.first] = offset;
 		offset++;
+
+		// Смещаем дескриптор только после создания
+		hDescriptor.Offset(1, mCbvSrvDescriptorSize);
 	}
 
+	// Создаем текстуру кисти после всех обычных текстур
+	OutputDebugStringA("\nCreating brush texture descriptors:\n");
+	CreateBrushTexture(hDescriptor, offset);
+
+	// === ВЫВОД ИНФОРМАЦИИ О СОЗДАННОЙ КУЧЕ ===
+	OutputDebugStringA("\n=== DESCRIPTOR HEAP SUMMARY ===\n");
+
+	// 1. Вывод всех TexOffsets
+	sprintf_s(msg, "TexOffsets map contains %zu entries:\n", TexOffsets.size());
+	OutputDebugStringA(msg);
+
+	for (const auto& offsetEntry : TexOffsets) {
+		sprintf_s(msg, "  %s -> index %d\n", offsetEntry.first.c_str(), offsetEntry.second);
+		OutputDebugStringA(msg);
+	}
+
+	// 2. Проверка наличия критических текстур террейна
+	OutputDebugStringA("\nCritical terrain textures check:\n");
+
+	const char* terrainTextures[] = { "terrainDiff", "terrainNorm", "terrainDisp" };
+	for (const char* texName : terrainTextures) {
+		if (TexOffsets.find(texName) == TexOffsets.end()) {
+			sprintf_s(msg, "  WARNING: %s NOT FOUND in TexOffsets!\n", texName);
+			OutputDebugStringA(msg);
+		}
+		else {
+			sprintf_s(msg, "  OK: %s found at index %d\n", texName, TexOffsets[texName]);
+			OutputDebugStringA(msg);
+		}
+	}
+
+	// 3. Проверка индексов кисти
+	OutputDebugStringA("\nBrush texture indices:\n");
+	if (mBrushTextureSRVIndex >= 0) {
+		sprintf_s(msg, "  Brush SRV index: %d\n", mBrushTextureSRVIndex);
+		OutputDebugStringA(msg);
+	}
+	else {
+		OutputDebugStringA("  WARNING: Brush SRV index not set!\n");
+	}
+
+	if (mBrushTextureUAVIndex >= 0) {
+		sprintf_s(msg, "  Brush UAV index: %d\n", mBrushTextureUAVIndex);
+		OutputDebugStringA(msg);
+	}
+	else {
+		OutputDebugStringA("  WARNING: Brush UAV index not set!\n");
+	}
+
+	// 4. Вывод дескрипторного размера
+	sprintf_s(msg, "\nDescriptor size: %u bytes\n", mCbvSrvDescriptorSize);
+	OutputDebugStringA(msg);
+
+	// 5. Проверка связности индексов
+	OutputDebugStringA("\nIndex continuity check:\n");
+	if (offset != mTextures.size()) {
+		sprintf_s(msg, "  WARNING: offset (%d) != mTextures.size() (%zu)\n",
+			offset, mTextures.size());
+		OutputDebugStringA(msg);
+	}
+	else {
+		sprintf_s(msg, "  OK: offset matches texture count\n");
+		OutputDebugStringA(msg);
+	}
+
+	sprintf_s(msg, "Total descriptors created: %d\n", offset + 2); // +2 для SRV и UAV кисти
+	OutputDebugStringA(msg);
+
+	OutputDebugStringA("=== END DESCRIPTOR HEAP SUMMARY ===\n\n");
 }
+
+void TexColumnsApp::CreateBrushTexture(CD3DX12_CPU_DESCRIPTOR_HANDLE baseDescriptorHandle, int baseOffset)
+{
+	// 1. Создаем текстуру с UAV флагом
+	D3D12_RESOURCE_DESC texDesc = {};
+	texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	texDesc.Alignment = 0;
+	texDesc.Width = mBrushTextureWidth;
+	texDesc.Height = mBrushTextureHeight;
+	texDesc.DepthOrArraySize = 1;
+	texDesc.MipLevels = 1;
+	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	texDesc.SampleDesc.Count = 1;
+	texDesc.SampleDesc.Quality = 0;
+	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+	CD3DX12_HEAP_PROPERTIES defaultHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+	ThrowIfFailed(md3dDevice->CreateCommittedResource(
+		&defaultHeapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&texDesc,
+		D3D12_RESOURCE_STATE_COMMON,
+		nullptr,
+		IID_PPV_ARGS(&mBrushTexture)));
+
+	// 2. Создаем SRV для текстуры кисти
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = texDesc.Format;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MostDetailedMip = 0;
+	srvDesc.Texture2D.MipLevels = 1;
+
+	// SRV идет сразу после всех обычных текстур
+	mBrushTextureSRV = baseDescriptorHandle;
+	md3dDevice->CreateShaderResourceView(mBrushTexture.Get(), &srvDesc, mBrushTextureSRV);
+
+	// 3. Смещаем дескриптор для UAV
+	CD3DX12_CPU_DESCRIPTOR_HANDLE uavHandle = baseDescriptorHandle;
+	uavHandle.Offset(1, mCbvSrvDescriptorSize);
+
+	// 4. Создаем UAV для текстуры кисти
+	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+	uavDesc.Format = texDesc.Format;
+	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+	uavDesc.Texture2D.MipSlice = 0;
+	uavDesc.Texture2D.PlaneSlice = 0;
+
+	mBrushTextureUAV = uavHandle;
+	md3dDevice->CreateUnorderedAccessView(mBrushTexture.Get(), nullptr, &uavDesc, mBrushTextureUAV);
+
+	// 5. Добавляем текстуру в mTextures для управления ресурсами
+	auto brushTex = std::make_unique<Texture>();
+	brushTex->Name = "brushCanvas";
+	brushTex->Resource = mBrushTexture;
+	brushTex->Filename = L"";
+
+	// Сохраняем индексы для быстрого доступа
+	mBrushTextureSRVIndex = baseOffset;
+	mBrushTextureUAVIndex = baseOffset + 1;
+
+	mTextures["brushCanvas"] = std::move(brushTex);
+
+	// 6. Инициализируем текстуру черным цветом
+	//InitializeBrushTexture();
+}
+
 
 void TexColumnsApp::BuildShadersAndInputLayout()
 {
@@ -743,6 +1207,11 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["terrainPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "PS", "ps_5_1");
 	mShaders["wireTerrPS"] = d3dUtil::CompileShader(L"Shaders\\Terrain.hlsl", nullptr, "WirePS", "ps_5_1"); 
 
+	mShaders["brushCS"] = d3dUtil::CompileShader(L"Shaders\\Brush.hlsl", nullptr, "BrushCS", "cs_5_1");
+
+	//mShaders["debugVS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "VS", "vs_5_1");
+	//mShaders["debugPS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "PS", "ps_5_1");
+
 	mShaders["debugVS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["debugPS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "PS", "ps_5_1");
 
@@ -754,10 +1223,16 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 
-	debugInputLayout =
+	mDebugInputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
+
+	//debugInputLayout =
+	//{
+	//	{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+	//};
 }
 
 void TexColumnsApp::BuildPSOs()
@@ -817,10 +1292,61 @@ void TexColumnsApp::BuildPSOs()
 	wireframePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&wireframePsoDesc, IID_PPV_ARGS(&mPSOs["wireframe"])));
 
+	OutputDebugStringA("=== Building PSOs ===\n");
+
+	// 1. Сначала проверим все ресурсы
+	if (!mBrushComputeRootSignature)
+	{
+		OutputDebugStringA("ERROR: mBrushComputeRootSignature is null!\n");
+		return;
+	}
+
+	if (!mTerrainRootSignature)
+	{
+		OutputDebugStringA("ERROR: mTerrainRootSignature is null!\n");
+		return;
+	}
+
+	if (!mShaders["brushCS"])
+	{
+		OutputDebugStringA("ERROR: brushCS shader is null!\n");
+		return;
+	}
+
+	if (!mShaders["terrainVS"])
+	{
+		OutputDebugStringA("ERROR: terrainVS shader is null!\n");
+		return;
+	}
+
+	if (!mShaders["terrainPS"])
+	{
+		OutputDebugStringA("ERROR: terrainPS shader is null!\n");
+		return;
+	}
+
+	OutputDebugStringA("Creating Compute PSO...\n");
+	// 2. Compute PSO
+	D3D12_COMPUTE_PIPELINE_STATE_DESC computePsoDesc;
+	ZeroMemory(&computePsoDesc, sizeof(D3D12_COMPUTE_PIPELINE_STATE_DESC));
+
+	computePsoDesc.pRootSignature = mBrushComputeRootSignature.Get();
+
+	computePsoDesc.CS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["brushCS"]->GetBufferPointer()),
+		mShaders["brushCS"]->GetBufferSize()
+	};
+	computePsoDesc.Flags = D3D12_PIPELINE_STATE_FLAG_NONE;
+	computePsoDesc.NodeMask = 0;
+
+	ThrowIfFailed(md3dDevice->CreateComputePipelineState(
+		&computePsoDesc, IID_PPV_ARGS(&mPSOs["brushCompute"]) ));
 
 	//
 	// PSO for Terrain.
 	//
+	OutputDebugStringA("Creating Terrain PSO...\n");
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC terrainPsoDesc;
 
 	ZeroMemory(&terrainPsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
@@ -851,7 +1377,7 @@ void TexColumnsApp::BuildPSOs()
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&terrainPsoDesc, IID_PPV_ARGS(&mPSOs["terrain"])));
 
 	//PSO for wireframe terrain
-
+	OutputDebugStringA("Creating Wire Terrain PSO...\n");
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC terrWirePsoDesc = terrainPsoDesc;
 	terrWirePsoDesc.PS =
 	{
@@ -861,10 +1387,42 @@ void TexColumnsApp::BuildPSOs()
 	terrWirePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&terrWirePsoDesc, IID_PPV_ARGS(&mPSOs["wireTerrain"])));
 
+	//
+	// Дебаг PSO
+	//
+	OutputDebugStringA("Creating Debug PSO...\n");
 
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC debugPsoDesc = {};
+	debugPsoDesc.InputLayout = { mDebugInputLayout.data(), (UINT)mDebugInputLayout.size() };
+	debugPsoDesc.pRootSignature = mDebugRootSignature.Get();
+	debugPsoDesc.VS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["debugVS"]->GetBufferPointer()),
+		mShaders["debugVS"]->GetBufferSize()
+	};
+	debugPsoDesc.PS =
+	{
+		reinterpret_cast<BYTE*>(mShaders["debugPS"]->GetBufferPointer()),
+		mShaders["debugPS"]->GetBufferSize()
+	};
+	debugPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	debugPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	debugPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	debugPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+	debugPsoDesc.DepthStencilState.DepthEnable = FALSE; // Без глубины для дебага
+	debugPsoDesc.DepthStencilState.StencilEnable = FALSE;
+	debugPsoDesc.SampleMask = UINT_MAX;
+	debugPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	debugPsoDesc.NumRenderTargets = 1;
+	debugPsoDesc.RTVFormats[0] = mBackBufferFormat;
+	debugPsoDesc.SampleDesc.Count = 1;
+	debugPsoDesc.SampleDesc.Quality = 0;
+	debugPsoDesc.DSVFormat = mDepthStencilFormat;
+
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&debugPsoDesc, IID_PPV_ARGS(&mPSOs["debugQuad"])));
 	//PSO for debug
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC debugPSODesc = {};
-	debugPSODesc.pRootSignature = mTerrainRootSignature.Get(); // �� ������ root signature
+	/*D3D12_GRAPHICS_PIPELINE_STATE_DESC debugPSODesc = {};
+	debugPSODesc.pRootSignature = mTerrainRootSignature.Get(); // �� ������ root signature
 
 	// Shaders
 	debugPSODesc.VS = {
@@ -876,19 +1434,19 @@ void TexColumnsApp::BuildPSOs()
 		mShaders["debugPS"]->GetBufferSize()
 	};
 
-	// Input Layout (������ �������)
+	// Input Layout (������ �������)
 	debugPSODesc.InputLayout = { debugInputLayout.data(), (UINT)debugInputLayout.size() };
 	debugPSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
 
-	// Rasterizer - ������ ����� �����������
+	// Rasterizer - ������ ����� �����������
 	debugPSODesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
 	debugPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
 	debugPSODesc.RasterizerState.DepthClipEnable = TRUE;
 
-	// Blend - ��������� ������������
+	// Blend - ��������� ������������
 	debugPSODesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 
-	// Depth - ������ �� �� �����
+	// Depth - ������ �� �� �����
 	debugPSODesc.DepthStencilState.DepthEnable = TRUE;
 	debugPSODesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
 	debugPSODesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
@@ -900,7 +1458,7 @@ void TexColumnsApp::BuildPSOs()
 	debugPSODesc.RTVFormats[0] = mBackBufferFormat;
 	debugPSODesc.DSVFormat = mDepthStencilFormat;
 
-	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&debugPSODesc, IID_PPV_ARGS(&mPSOs["debug"])));
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&debugPSODesc, IID_PPV_ARGS(&mPSOs["debug"])));*/
 }
 
 void TexColumnsApp::BuildFrameResources()
@@ -910,7 +1468,7 @@ void TexColumnsApp::BuildFrameResources()
 	for (int i = 0; i < gNumFrameResources; ++i)
 	{
 		mFrameResources.push_back(std::make_unique<FrameResource>(md3dDevice.Get(),
-			1, (UINT)mAllRitems.size(), (UINT)mMaterials.size(), (UINT)mTerrain->GetAllTiles().size()
+			1, (UINT)mAllRitems.size(), (UINT)mMaterials.size(), (UINT)mTerrain->GetAllTiles().size(), 1
 		));
 	}
 	mCurrFrameResourceIndex = 0;
@@ -927,6 +1485,84 @@ void TexColumnsApp::BuildFrameResources()
 	{
 		t->NumFramesDirty = gNumFrameResources;
 	}
+}
+
+void TexColumnsApp::BuildDebugGeometry()
+{
+	GeometryGenerator::MeshData quad;
+
+	// Создаем полноэкранный квад в NDC пространстве (-1 до 1)
+	quad.Vertices.resize(4);
+	quad.Indices32.resize(6);
+
+	// Вершины
+	quad.Vertices[0].Position = XMFLOAT3(-1.0f, -1.0f, 0.0f);
+	quad.Vertices[0].Normal = XMFLOAT3(0.0f, 0.0f, -1.0f);
+	quad.Vertices[0].TexC = XMFLOAT2(0.0f, 1.0f);
+
+	quad.Vertices[1].Position = XMFLOAT3(-1.0f, 1.0f, 0.0f);
+	quad.Vertices[1].Normal = XMFLOAT3(0.0f, 0.0f, -1.0f);
+	quad.Vertices[1].TexC = XMFLOAT2(0.0f, 0.0f);
+
+	quad.Vertices[2].Position = XMFLOAT3(1.0f, -1.0f, 0.0f);
+	quad.Vertices[2].Normal = XMFLOAT3(0.0f, 0.0f, -1.0f);
+	quad.Vertices[2].TexC = XMFLOAT2(1.0f, 1.0f);
+
+	quad.Vertices[3].Position = XMFLOAT3(1.0f, 1.0f, 0.0f);
+	quad.Vertices[3].Normal = XMFLOAT3(0.0f, 0.0f, -1.0f);
+	quad.Vertices[3].TexC = XMFLOAT2(1.0f, 0.0f);
+
+	// Индексы
+	quad.Indices32 = { 0, 1, 2, 1, 3, 2 };
+
+	// Submesh
+	SubmeshGeometry quadSubmesh;
+	quadSubmesh.IndexCount = (UINT)quad.Indices32.size();
+	quadSubmesh.StartIndexLocation = 0;
+	quadSubmesh.BaseVertexLocation = 0;
+
+	// Вершины
+	std::vector<Vertex> vertices(quad.Vertices.size());
+	for (size_t i = 0; i < quad.Vertices.size(); ++i)
+	{
+		vertices[i].Pos = quad.Vertices[i].Position;
+		vertices[i].Normal = quad.Vertices[i].Normal;
+		vertices[i].TexC = quad.Vertices[i].TexC;
+		vertices[i].Tangent = XMFLOAT3(1.0f, 0.0f, 0.0f);
+	}
+
+	// Индексы
+	auto indices = quad.GetIndices16();
+
+	const UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+	const UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint16_t);
+
+	// Создаем геометрию
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "debugQuadGeo";
+
+	ThrowIfFailed(D3DCreateBlob(vbByteSize, &geo->VertexBufferCPU));
+	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), vertices.data(), vbByteSize);
+
+	ThrowIfFailed(D3DCreateBlob(ibByteSize, &geo->IndexBufferCPU));
+	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), indices.data(), ibByteSize);
+
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+
+	geo->VertexByteStride = sizeof(Vertex);
+	geo->VertexBufferByteSize = vbByteSize;
+	geo->IndexFormat = DXGI_FORMAT_R16_UINT;
+	geo->IndexBufferByteSize = ibByteSize;
+
+	geo->DrawArgs["debugQuad"] = quadSubmesh;
+
+	// Сохраняем в mDebugGeo и в общую коллекцию
+	mDebugGeometries[geo->Name] = std::move(geo);
+	//mGeometries[mDebugGeo->Name] = std::move(mDebugGeo);
 }
 
 void TexColumnsApp::BuildShapeGeometry()
@@ -1055,15 +1691,16 @@ void TexColumnsApp::BuildShapeGeometry()
 
 void TexColumnsApp::GenerateTileGeometry(const XMFLOAT3& worldPos, float tileSize, int lodLevel, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices)
 {
-	int minResolution = 8;    // ����������� ����������
-	//int maxResolution = 16;  // ������������ ����������
-	// ���������� ������������� � ����������� LOD ������
-	int resolution = minResolution << lodLevel;
+	int minResolution = 8;    
+
+	int resolution = (minResolution << lodLevel);
 	resolution = min(resolution, minResolution);
 	vertices.clear();
 	indices.clear();
 
-	float stepSize = tileSize / (resolution - 1);
+	//float scale = 1;
+
+	float stepSize = (tileSize) / (resolution - 1);
 	float curtainDepth = 50;
 
 	//main vertices
@@ -1228,14 +1865,14 @@ void TexColumnsApp::BuildTerrainGeometry()
 
 		GenerateTileGeometry(tile->worldPos, tile->tileSize, tile->lodLevel, tileVertices, tileIndices);
 
-		// ������� ������� �� ���������� ��� ����������� ������
+		// ������� ������� �� ���������� ��� ����������� ������
 		UINT baseVertex = static_cast<int>(allVertices.size());
 		for (auto& index : tileIndices)
 		{
 			index += baseVertex;
 		}
 
-		// ��������� submesh
+		// ��������� submesh
 		SubmeshGeometry submesh;
 		submesh.IndexCount = (UINT)tileIndices.size();
 		submesh.StartIndexLocation = (UINT)allIndices.size();
@@ -1244,7 +1881,7 @@ void TexColumnsApp::BuildTerrainGeometry()
 		std::string submeshName = "tile_" + std::to_string(tileIdx) + "_LOD_" + std::to_string(tile->lodLevel);
 		terrainGeo->DrawArgs[submeshName] = submesh;
 
-		// ��������� � ����� �������
+		// ��������� � ����� �������
 		allVertices.insert(allVertices.end(), tileVertices.begin(), tileVertices.end());
 		allIndices.insert(allIndices.end(), tileIndices.begin(), tileIndices.end());
 
@@ -1275,112 +1912,112 @@ void TexColumnsApp::BuildTerrainGeometry()
 	mGeometries[terrainGeo->Name] = std::move(terrainGeo);
 }
 
-void TexColumnsApp::CreateBoundingBoxMesh(const BoundingBox& bbox, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices)
-{
-	vertices.clear();
-	indices.clear();
+//void TexColumnsApp::CreateBoundingBoxMesh(const BoundingBox& bbox, std::vector<Vertex>& vertices, std::vector<std::uint32_t>& indices)
+//{
+////	vertices.clear();
+////	indices.clear();
+////
+////	// �������� 8 ����� bounding box
+////	XMFLOAT3 corners[8];
+////	bbox.GetCorners(corners);
+////
+////	// ������� �������
+////	for (int i = 0; i < 8; i++) {
+////		Vertex vertex;
+////		vertex.Pos = corners[i];
+////		vertex.Normal = XMFLOAT3(0, 1, 0);
+////		vertex.TexC = XMFLOAT2(0, 0);
+////		vertex.Tangent = XMFLOAT3(1, 0, 0);
+////		vertices.push_back(vertex);
+////	}
+////
+////	// ������� ��� 12 ����� (24 �������)
+////	// ������ ����� = 2 �������
+////	std::uint32_t lineIndices[] = {
+////		// ������ �����
+////		0, 1, 1, 2, 2, 3, 3, 0,
+////		// ������� �����
+////		4, 5, 5, 6, 6, 7, 7, 4,
+////		// ������������ �����
+////		0, 4, 1, 5, 2, 6, 3, 7
+////	};
+////
+////	indices.insert(indices.end(), std::begin(lineIndices), std::end(lineIndices));
+////}
+////
+////void TexColumnsApp::BuildDebugGeometry()
+////{
+////	std::vector<Vertex> vertices;
+////	std::vector<std::uint32_t> indices;
+////
+////	// ������� ��������� ��� ���������� bounding box
+////	BoundingBox unitBox;
+////	BoundingBox::CreateFromPoints(unitBox,
+////		XMVectorSet(-0.5f, -0.5f, -0.5f, 0.0f),
+////		XMVectorSet(0.5f, 0.5f, 0.5f, 0.0f)
+////	);
+////
+////	CreateBoundingBoxMesh(unitBox, vertices, indices);
+////
+////	// ������� mesh geometry
+////	auto geo = std::make_unique<MeshGeometry>();
+////	geo->Name = "debugBoxGeo";
+////
+////	// Vertex buffer
+////	UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
+////	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+////		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
+////
+////	// Index buffer
+////	UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint32_t);
+////	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
+////		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
+////
+////	geo->VertexByteStride = sizeof(Vertex);
+////	geo->VertexBufferByteSize = vbByteSize;
+////	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
+////	geo->IndexBufferByteSize = ibByteSize;
+////
+////	// Submesh
+////	SubmeshGeometry submesh;
+////	submesh.IndexCount = (UINT)indices.size();
+////	submesh.StartIndexLocation = 0;
+////	submesh.BaseVertexLocation = 0;
+////	geo->DrawArgs["boundainBox"] = submesh;
+////
+////	mGeometries[geo->Name] = std::move(geo);
+//}
 
-	// �������� 8 ����� bounding box
-	XMFLOAT3 corners[8];
-	bbox.GetCorners(corners);
-
-	// ������� �������
-	for (int i = 0; i < 8; i++) {
-		Vertex vertex;
-		vertex.Pos = corners[i];
-		vertex.Normal = XMFLOAT3(0, 1, 0);
-		vertex.TexC = XMFLOAT2(0, 0);
-		vertex.Tangent = XMFLOAT3(1, 0, 0);
-		vertices.push_back(vertex);
-	}
-
-	// ������� ��� 12 ����� (24 �������)
-	// ������ ����� = 2 �������
-	std::uint32_t lineIndices[] = {
-		// ������ �����
-		0, 1, 1, 2, 2, 3, 3, 0,
-		// ������� �����
-		4, 5, 5, 6, 6, 7, 7, 4,
-		// ������������ �����
-		0, 4, 1, 5, 2, 6, 3, 7
-	};
-
-	indices.insert(indices.end(), std::begin(lineIndices), std::end(lineIndices));
-}
-
-void TexColumnsApp::BuildDebugGeometry()
-{
-	std::vector<Vertex> vertices;
-	std::vector<std::uint32_t> indices;
-
-	// ������� ��������� ��� ���������� bounding box
-	BoundingBox unitBox;
-	BoundingBox::CreateFromPoints(unitBox,
-		XMVectorSet(-0.5f, -0.5f, -0.5f, 0.0f),
-		XMVectorSet(0.5f, 0.5f, 0.5f, 0.0f)
-	);
-
-	CreateBoundingBoxMesh(unitBox, vertices, indices);
-
-	// ������� mesh geometry
-	auto geo = std::make_unique<MeshGeometry>();
-	geo->Name = "debugBoxGeo";
-
-	// Vertex buffer
-	UINT vbByteSize = (UINT)vertices.size() * sizeof(Vertex);
-	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-		mCommandList.Get(), vertices.data(), vbByteSize, geo->VertexBufferUploader);
-
-	// Index buffer
-	UINT ibByteSize = (UINT)indices.size() * sizeof(std::uint32_t);
-	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(md3dDevice.Get(),
-		mCommandList.Get(), indices.data(), ibByteSize, geo->IndexBufferUploader);
-
-	geo->VertexByteStride = sizeof(Vertex);
-	geo->VertexBufferByteSize = vbByteSize;
-	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
-	geo->IndexBufferByteSize = ibByteSize;
-
-	// Submesh
-	SubmeshGeometry submesh;
-	submesh.IndexCount = (UINT)indices.size();
-	submesh.StartIndexLocation = 0;
-	submesh.BaseVertexLocation = 0;
-	geo->DrawArgs["boundainBox"] = submesh;
-
-	mGeometries[geo->Name] = std::move(geo);
-}
-
-void  TexColumnsApp::RenderBoundingBoxes()
-{
-	//if (!showTilesBoundingBox) return;
-
-	//mCommandList->SetPipelineState(mPSOs["debug"].Get());
-	//mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
-
-	//auto debugGeo = mGeometries["debugBoxGeo"].get();
-	//mCommandList->IASetVertexBuffers(0, 1, &debugGeo->VertexBufferView());
-	//mCommandList->IASetIndexBuffer(&debugGeo->IndexBufferView());
-	//auto& tiles = mTerrain->GetAllTiles();
-	//for (const auto& tile : tiles) 
-	//{
-	//	BoundingBox debugBox = tile->boundingBox;
-	//	// ��������� ������� �������������� �� unit box � ������ bounding box
-	//	XMFLOAT3 center, extents;
-	//	center = debugBox.Center;
-	//	extents = debugBox.Extents;
-
-	//	// ������������ unit box �� �������� bounding box
-	//	XMMATRIX scale = XMMatrixScaling(extents.x * 2, extents.y * 2, extents.z * 2);
-	//	XMMATRIX translation = XMMatrixTranslation(center.x, center.y, center.z);
-	//	XMMATRIX world = scale * translation;
-
-	//	auto submesh = debugGeo->DrawArgs["box"];
-	//	mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1,
-	//		submesh.StartIndexLocation,
-	//		submesh.BaseVertexLocation, 0);
-	//}
-}
+//void  TexColumnsApp::RenderBoundingBoxes()
+//{
+//	//if (!showTilesBoundingBox) return;
+//
+//	//mCommandList->SetPipelineState(mPSOs["debug"].Get());
+//	//mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+//
+//	//auto debugGeo = mGeometries["debugBoxGeo"].get();
+//	//mCommandList->IASetVertexBuffers(0, 1, &debugGeo->VertexBufferView());
+//	//mCommandList->IASetIndexBuffer(&debugGeo->IndexBufferView());
+//	//auto& tiles = mTerrain->GetAllTiles();
+//	//for (const auto& tile : tiles) 
+//	//{
+//	//	BoundingBox debugBox = tile->boundingBox;
+//	//	// ��������� ������� �������������� �� unit box � ������ bounding box
+//	//	XMFLOAT3 center, extents;
+//	//	center = debugBox.Center;
+//	//	extents = debugBox.Extents;
+//
+//	//	// ������������ unit box �� �������� bounding box
+//	//	XMMATRIX scale = XMMatrixScaling(extents.x * 2, extents.y * 2, extents.z * 2);
+//	//	XMMATRIX translation = XMMatrixTranslation(center.x, center.y, center.z);
+//	//	XMMATRIX world = scale * translation;
+//
+//	//	auto submesh = debugGeo->DrawArgs["box"];
+//	//	mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1,
+//	//		submesh.StartIndexLocation,
+//	//		submesh.BaseVertexLocation, 0);
+//	//}
+//}
 
 void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
 {
@@ -1467,10 +2104,10 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		cmdList->IASetIndexBuffer(&ri->Geo->IndexBufferView());
 		cmdList->IASetPrimitiveTopology(ri->PrimitiveType);
 
-		// �������� ������� ���������� ����
+		// �������� ������� ���������� ����
 		CD3DX12_GPU_DESCRIPTOR_HANDLE baseHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
-		// ������������� ������������� ������� ��� �������
+		// ������������� ������������� ������� ��� �������
 		CD3DX12_GPU_DESCRIPTOR_HANDLE diffuseHandle = baseHandle;
 		diffuseHandle.Offset(ri->Mat->DiffuseSrvHeapIndex, mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(0, diffuseHandle);  // t0 - diffuse
@@ -1495,6 +2132,15 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 
 void TexColumnsApp::DrawTilesRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<Tile*>& tiles)
 {
+
+	char debugMsg[256];
+
+	sprintf_s(debugMsg, "TexOffsets: diff=%d, norm=%d, disp=%d\n",
+		TexOffsets["terrainDiff"],
+		TexOffsets["terrainNorm"],
+		TexOffsets["terrainDisp"]);
+	OutputDebugStringA(debugMsg);
+
 	UINT objCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(ObjectConstants));
 	UINT matCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(MaterialConstants));
 	UINT terrCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(TileConstants));
@@ -1518,13 +2164,32 @@ void TexColumnsApp::DrawTilesRenderItems(ID3D12GraphicsCommandList* cmdList, con
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainNormHandle = baseHandle;
 		terrainNormHandle.Offset(TexOffsets["terrainNorm"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(1, terrainDiffHandle);   // t1 - Terrain normal
+		cmdList->SetGraphicsRootDescriptorTable(1, terrainNormHandle);   // t1 - Terrain normal
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainDispHandle = baseHandle;
 		terrainDispHandle.Offset(TexOffsets["terrainDisp"], mCbvSrvDescriptorSize);
 		cmdList->SetGraphicsRootDescriptorTable(2, terrainDispHandle);     // t2 - Terrain displacement
 
+		// CBV b0 (корневой индекс 3) - cbPerObject
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
+		cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
+
+		// CBV b1 (корневой индекс 4) - cbPass - устанавливается в Draw()
+		// CBV b2 (корневой индекс 5) - cbMaterial
+		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
+		cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
+
+		// CBV b3 (корневой индекс 6) - cbTerrainTile
+		auto terrCB = mCurrFrameResource->TerrainCB->Resource();
+		cmdList->SetGraphicsRootConstantBufferView(6, terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize);
+
+		// CBV b4 (корневой индекс 7) - cbBrush - устанавливается отдельно
+		auto brushCB = mCurrFrameResource->BrushCB->Resource();
+		cmdList->SetGraphicsRootConstantBufferView(7, brushCB->GetGPUVirtualAddress());
+
+		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+
+		/*D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
 
 		cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
@@ -1533,118 +2198,382 @@ void TexColumnsApp::DrawTilesRenderItems(ID3D12GraphicsCommandList* cmdList, con
 		auto terrCB = mCurrFrameResource->TerrainCB->Resource();
 		mCommandList->SetGraphicsRootConstantBufferView(6, terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize);
 
-		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
+		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);*/
 	}
 }
 
 void TexColumnsApp::Draw(const GameTimer& gt)
 {
-	auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
+	static int frameCount = 0;
+	frameCount++;
 
-	// Reuse the memory associated with command recording.
-	// We can only reset when the associated command lists have finished execution on the GPU.
-	ThrowIfFailed(cmdListAlloc->Reset());
+	char debugMsg[256];
+	//sprintf_s(debugMsg, "=== Frame %d started ===\n", frameCount);
+	//OutputDebugStringA(debugMsg);
 
-	// A command list can be reset after it has been added to the command queue via ExecuteCommandList.
-	// Reusing the command list reuses memory.
-	if (isFillModeSolid)
+	try
 	{
-		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get()));
-	}
-	else
-		ThrowIfFailed(mCommandList->Reset(cmdListAlloc.Get(), mPSOs["wireframe"].Get()));
+		//OutputDebugStringA("1. Getting command allocator...\n");
+		auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
 
+		//OutputDebugStringA("2. Resetting command allocator...\n");
+		// Reuse the memory associated with command recording.
+		// We can only reset when the associated command lists have finished execution on the GPU.
+		HRESULT hr = cmdListAlloc->Reset();
+		if (FAILED(hr))
+		{
+			sprintf_s(debugMsg, "FAILED to reset command allocator: 0x%08X\n", hr);
+			OutputDebugStringA(debugMsg);
+			ThrowIfFailed(hr);
+		}
 
-	mCommandList->RSSetViewports(1, &mScreenViewport);
-	mCommandList->RSSetScissorRects(1, &mScissorRect);
-
-	// Indicate a state transition on the resource usage.
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-		D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
-
-	// Clear the back buffer and depth buffer.
-	mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
-	mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
-
-	// Specify the buffers we are going to render to.
-	mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
-
-	ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-
-	mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-
-	auto passCB = mCurrFrameResource->PassCB->Resource();
-	mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
-
-	//DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
-
-	//Draw Terrain
-	mVisibleTiles.clear();
-	mVisibleTiles = mTerrain->GetVisibleTiles();
-
-	if (!mVisibleTiles.empty())
-	{
-		// ������������� �� PSO ��� ��������
+		//OutputDebugStringA("3. Resetting command list...\n");
+		// A command list can be reset after it has been added to the command queue via ExecuteCommandList.
+		// Reusing the command list reuses memory.
 		if (isFillModeSolid)
-			mCommandList->SetPipelineState(mPSOs["terrain"].Get());
+		{
+			hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get());
+		}
 		else
-			mCommandList->SetPipelineState(mPSOs["wireTerrain"].Get());
+		{
+			hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["wireframe"].Get());
+		}
 
-		// ������������� �������� ��������� ��� �������� (���� ����������)
-		mCommandList->SetGraphicsRootSignature(mTerrainRootSignature.Get());
+		if (FAILED(hr))
+		{
+			sprintf_s(debugMsg, "FAILED to reset command list: 0x%08X\n", hr);
+			OutputDebugStringA(debugMsg);
+			ThrowIfFailed(hr);
+		}
 
-		// ������������� ����������� ����� ��� ��������
+		//OutputDebugStringA("4. Setting viewport and scissor...\n");
+		mCommandList->RSSetViewports(1, &mScreenViewport);
+		mCommandList->RSSetScissorRects(1, &mScissorRect);
+
+		//OutputDebugStringA("5. Transition back buffer to RENDER_TARGET...\n");
+		// Indicate a state transition on the resource usage.
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+		//OutputDebugStringA("6. Clearing buffers...\n");
+		// Clear the back buffer and depth buffer.
+		mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
+		mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+		//OutputDebugStringA("7. Setting render targets...\n");
+		// Specify the buffers we are going to render to.
+		mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
+
+		//OutputDebugStringA("8. Setting descriptor heaps...\n");
+		ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+		//OutputDebugStringA("9. Setting main root signature...\n");
+		mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+
+		
+
+
+		//OutputDebugStringA("10. Setting pass constant buffer...\n");
+		auto passCB = mCurrFrameResource->PassCB->Resource();
 		mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
-		// ������ ����� ��������
-		DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
 
-		RenderBoundingBoxes();
+		DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
-		// ������������ � �������� PSO ���� ����� ���������� ��������� ������ ��������
-		if (isFillModeSolid)
-			mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+		//OutputDebugStringA("11. Getting visible tiles...\n");
+		//Draw Terrain
+		mVisibleTiles.clear();
+		mVisibleTiles = mTerrain->GetVisibleTiles();
+
+		if (!mVisibleTiles.empty())
+		{
+			sprintf_s(debugMsg, "Rendering %d visible tiles\n", (int)mVisibleTiles.size());
+			OutputDebugStringA(debugMsg);
+		
+			//OutputDebugStringA("12. Setting terrain PSO...\n");
+			// Установка PSO для террейна
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["terrain"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["wireTerrain"].Get());
+
+			//OutputDebugStringA("13. Setting terrain root signature...\n");
+			// Установка корневой сигнатуры для террейна
+			mCommandList->SetGraphicsRootSignature(mTerrainRootSignature.Get());
+
+			//OutputDebugStringA("14. Setting pass CB for terrain...\n");
+			// Устанавливаем cbPass (b1, индекс 4 в TerrainRootSignature)
+			mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
+
+			//OutputDebugStringA("15. Drawing tiles...\n");
+			// Отрисовка тайлов
+			DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
+
+			//OutputDebugStringA("16. Restoring main PSO...\n");
+			// Возвращаемся к основной PSO
+			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
+
+
+		}
 		else
-			mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
+		{
+			OutputDebugStringA("No visible tiles to render\n");
+		}
+
+		// ============ ВЫПОЛНЕНИЕ COMPUTE SHADER ДО ОСНОВНОГО РЕНДЕРИНГА ============
+		if (mIsPainting)
+		{
+			OutputDebugStringA("=== EXECUTING COMPUTE SHADER ===\n");
+
+			// 1. Сохраняем текущие графические настройки (если нужно)
+			// Или просто переключаемся на compute
+
+			// 2. Устанавливаем Compute PSO и root signature
+			mCommandList->SetPipelineState(mPSOs["brushCompute"].Get());
+			mCommandList->SetComputeRootSignature(mBrushComputeRootSignature.Get());
+
+			// 3. Барьер для перевода текстуры
+			CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+				mBrushTexture.Get(),
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+				D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+			mCommandList->ResourceBarrier(1, &barrier);
+
+			// 4. Устанавливаем корневые параметры для COMPUTE SHADER:
+
+			// === ПРОВЕРЬТЕ ВАШУ ROOT SIGNATURE! ===
+			// По вашему BuildCsRootSignature():
+			// Индекс 0: b0 (BrushCB) 
+			// Индекс 1: b1 (TerrainCB)  
+			// Индекс 2: t0 (Карта высот SRV)
+			// Индекс 3: u0 (Текстура кисти UAV)
+
+			// Но в коде вы устанавливаете:
+			// SetComputeRootConstantBufferView(1, brushCB) - это b1, должно быть b0!
+			// SetComputeRootConstantBufferView(0, terrainCB) - это b0, должно быть b1!
+
+			// ИСПРАВЬТЕ:
+			if (!mVisibleTiles.empty())
+			{
+				auto tile = mVisibleTiles[0];
+				auto terrCB = mCurrFrameResource->TerrainCB->Resource();
+				UINT terrCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(TileConstants));
+				D3D12_GPU_VIRTUAL_ADDRESS terrainCBAddress = terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize;
+				mCommandList->SetComputeRootConstantBufferView(1, terrainCBAddress); // b1
+			}
+
+			auto brushCB = mCurrFrameResource->BrushCB->Resource();
+			mCommandList->SetComputeRootConstantBufferView(0, brushCB->GetGPUVirtualAddress()); // b0
+
+			// SRV для карты высот (t0) - индекс 2
+			CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(
+				mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+				TexOffsets["terrainDisp"],
+				mCbvSrvDescriptorSize);
+			mCommandList->SetComputeRootDescriptorTable(2, srvHandle);
+
+			// UAV для текстуры кисти (u0) - индекс 3
+			CD3DX12_GPU_DESCRIPTOR_HANDLE uavHandle(
+				mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+				mBrushTextureUAVIndex,
+				mCbvSrvDescriptorSize);
+			mCommandList->SetComputeRootDescriptorTable(3, uavHandle);
+
+			// 5. Диспатчим Compute Shader
+			UINT threadGroupsX = (UINT)ceil(mBrushTextureWidth / 16.0f);
+			UINT threadGroupsY = (UINT)ceil(mBrushTextureHeight / 16.0f);
+
+			char debugMsg[256];
+			sprintf_s(debugMsg, "Dispatch: %dx%d thread groups\n", threadGroupsX, threadGroupsY);
+			OutputDebugStringA(debugMsg);
+
+			mCommandList->Dispatch(threadGroupsX, threadGroupsY, 1);
+
+			// 6. Возвращаем текстуру в SRV состояние
+			barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+				mBrushTexture.Get(),
+				D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+			mCommandList->ResourceBarrier(1, &barrier);
+
+			// ===== ВАЖНО: ВОЗВРАЩАЕМ ГРАФИЧЕСКИЕ НАСТРОЙКИ! =====
+			OutputDebugStringA("Restoring graphics pipeline...\n");
+
+			// Возвращаем графическую root signature (основную)
+			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+
+			// Возвращаем графический PSO
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
+
+			// Возвращаем дескрипторные хипы (если нужно)
+			ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+			mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+			// Устанавливаем pass CB обратно
+			auto passCB = mCurrFrameResource->PassCB->Resource();
+			mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
+
+			OutputDebugStringA("Compute shader executed successfully\n");
+		}
+
+		// ===========================================================================
+
+		// ============ ДЕБАГ РЕНДЕРИНГ ТЕКСТУРЫ КИСТИ ============
+		if (mShowDebugTexture)
+		{
+			OutputDebugStringA("Debug rendering brush texture...\n");
+
+			// Сохраняем текущий viewport/scissor
+			D3D12_VIEWPORT savedViewport = mScreenViewport;
+			D3D12_RECT savedScissor = mScissorRect;
+
+			// Настройки для дебаг окна (маленькое окно в углу)
+			D3D12_VIEWPORT debugViewport;
+			debugViewport.TopLeftX = 10.0f;
+			debugViewport.TopLeftY = 20.0f;
+			debugViewport.Width = 256.0f;    // Размер дебаг окна
+			debugViewport.Height = 256.0f;
+			debugViewport.MinDepth = 0.0f;
+			debugViewport.MaxDepth = 5.0f;
+
+			D3D12_RECT debugScissor;
+			debugScissor.left = 10;
+			debugScissor.top = 10;
+			debugScissor.right = 10 + 256;
+			debugScissor.bottom = 10 + 256;
+
+			mCommandList->RSSetViewports(1, &debugViewport);
+			mCommandList->RSSetScissorRects(1, &debugScissor);
+
+			// Устанавливаем дебаг PSO
+			mCommandList->SetPipelineState(mPSOs["terrain"].Get());
+			mCommandList->SetGraphicsRootSignature(mDebugRootSignature.Get());
+
+			// Устанавливаем текстуру кисти как SRV
+			CD3DX12_GPU_DESCRIPTOR_HANDLE brushSrvHandle(
+				mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+				mBrushTextureSRVIndex,
+				mCbvSrvDescriptorSize);
+			mCommandList->SetGraphicsRootDescriptorTable(0, brushSrvHandle);
+
+			//Используем правильный доступ к геометрии из map
+			auto& debugGeo = mDebugGeometries["debugQuad"]; // Получаем unique_ptr из map
+
+			if (debugGeo) // Проверяем, что геометрия существует
+			{
+				D3D12_VERTEX_BUFFER_VIEW vbv = debugGeo->VertexBufferView();
+				D3D12_INDEX_BUFFER_VIEW ibv = debugGeo->IndexBufferView();
+
+				mCommandList->IASetVertexBuffers(0, 1, &vbv);
+				mCommandList->IASetIndexBuffer(&ibv);
+				mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+				// Рисуем дебаг квад
+				auto& submesh = debugGeo->DrawArgs["debugQuad"];
+				mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1, submesh.StartIndexLocation, submesh.BaseVertexLocation, 0);
+			}
+			else
+			{
+				OutputDebugStringA("ERROR: Debug geometry not found!\n");
+			}
+
+
+			// Восстанавливаем viewport/scissor
+			mCommandList->RSSetViewports(1, &savedViewport);
+			mCommandList->RSSetScissorRects(1, &savedScissor);
+
+			// Возвращаемся к основному рендерингу
+			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+			mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+
+			OutputDebugStringA("Debug rendering complete\n");
+		}
+		// =======================================================
+		//OutputDebugStringA("17. Rendering ImGui...\n");
+		//ImGui::EndFrame();
+
+		// Установка heap ImGui для отрисовки
+		ID3D12DescriptorHeap* heaps[] = { mImGuiSrvDescriptorHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+
+		ImGui::Render();
+		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+
+		//OutputDebugStringA("18. Restoring main descriptor heap...\n");
+		// Возвращаем основной heap
+		ID3D12DescriptorHeap* mainHeaps[] = { mSrvDescriptorHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(mainHeaps), mainHeaps);
+
+
+		//OutputDebugStringA("19. Transition back buffer to PRESENT...\n");
+		// Indicate a state transition on the resource usage.
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
+
+		//OutputDebugStringA("20. Closing command list...\n");
+		// Done recording commands.
+		hr = mCommandList->Close();
+		if (FAILED(hr))
+		{
+			//sprintf_s(debugMsg, "FAILED to close command list: 0x%08X\n", hr);
+			//OutputDebugStringA(debugMsg);
+			ThrowIfFailed(hr);
+		}
+
+		//OutputDebugStringA("21. Executing command lists...\n");
+		// Add the command list to the queue for execution.
+		ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+		mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
+
+		//OutputDebugStringA("22. Presenting swap chain...\n");
+		// Swap the back and front buffers
+		hr = mSwapChain->Present(0, 0);
+		if (FAILED(hr))
+		{
+			//sprintf_s(debugMsg, "FAILED to present swap chain: 0x%08X\n", hr);
+			//OutputDebugStringA(debugMsg);
+			ThrowIfFailed(hr);
+		}
+
+		mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
+
+		//OutputDebugStringA("23. Updating fence...\n");
+		// Advance the fence value to mark commands up to this fence point.
+		mCurrFrameResource->Fence = ++mCurrentFence;
+
+		//OutputDebugStringA("24. Signaling fence...\n");
+		// Add an instruction to the command queue to set a new fence point. 
+		// Because we are on the GPU timeline, the new fence point won't be 
+		// set until the GPU finishes processing all the commands prior to this Signal().
+		hr = mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+		if (FAILED(hr))
+		{
+			//sprintf_s(debugMsg, "FAILED to signal fence: 0x%08X\n", hr);
+			//OutputDebugStringA(debugMsg);
+			ThrowIfFailed(hr);
+		}
 	}
-	//
+	catch (const std::exception& e)
+	{
+		//sprintf_s(debugMsg, "EXCEPTION in Draw(): %s\n", e.what());
+		//OutputDebugStringA(debugMsg);
+		throw;
+	}
+	catch (...)
+	{
+		//OutputDebugStringA("UNKNOWN EXCEPTION in Draw()\n");
+		throw;
+	}
 
-	ImGui::EndFrame();
-	// ������������� heap ImGui ����� ����������
-	ID3D12DescriptorHeap* heaps[] = { mImGuiSrvDescriptorHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
-
-	ImGui::Render();
-	ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
-
-	// ����� ��������� ImGui ���������������� ���� �������� heaps ���� �����
-	ID3D12DescriptorHeap* mainHeaps[] = { mSrvDescriptorHeap.Get() };
-	mCommandList->SetDescriptorHeaps(_countof(mainHeaps), mainHeaps);
-
-	ID3D12DescriptorHeap* correctHeaps[] = { mSrvDescriptorHeap.Get() };
-
-	// Indicate a state transition on the resource usage.
-	mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
-		D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
-
-	// Done recording commands.
-	ThrowIfFailed(mCommandList->Close());
-
-	// Add the command list to the queue for execution.
-	ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
-	mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
-
-	// Swap the back and front buffers
-	ThrowIfFailed(mSwapChain->Present(0, 0));
-	mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
-
-	// Advance the fence value to mark commands up to this fence point.
-	mCurrFrameResource->Fence = ++mCurrentFence;
-
-	// Add an instruction to the command queue to set a new fence point. 
-	// Because we are on the GPU timeline, the new fence point won't be 
-	// set until the GPU finishes processing all the commands prior to this Signal().
-	mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+	//sprintf_s(debugMsg, "=== Frame %d completed ===\n", frameCount);
+	OutputDebugStringA(debugMsg);
 }
 
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> TexColumnsApp::GetStaticSamplers()

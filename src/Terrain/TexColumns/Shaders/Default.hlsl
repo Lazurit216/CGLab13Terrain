@@ -53,8 +53,16 @@ cbuffer cbPass : register(b1)
     float4 gAmbientLight;
     Light gLights[MaxLights];
     
+    //int isBrushMode;
     float gScale;
     float gTessellationFactor;
+    //float BrushRadius;
+
+    //float BrushWPos;
+    //float BrushFalofRadius;
+
+    //float4 BrushColors;
+
 };
 
 // Constant data that varies per material.
