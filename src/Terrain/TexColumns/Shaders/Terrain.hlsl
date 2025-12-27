@@ -15,6 +15,7 @@
 Texture2D gTerrDiffMap : register(t0);
 Texture2D gTerrNormMap : register(t1);
 Texture2D gTerrDispMap : register(t2);
+Texture2D gBrushTexture : register(t3); // t3 - текстура кисти (SRV)
 
 // Constant data that varies per frame.
 cbuffer cbPerObject : register(b0)
@@ -262,7 +263,13 @@ float4 PS(VertexOut pin) : SV_Target
         return borderColor;
     
     float4 diffuseAlbedo = gTerrDiffMap.Sample(gsamAnisotropicWrap, pin.TexC);
+    float4 drawAlbedo = gBrushTexture.Sample(gsamAnisotropicWrap, pin.TexC);
     diffuseAlbedo *= gDiffuseAlbedo;
+    
+    if (drawAlbedo.a > 0.001f)
+    {
+        diffuseAlbedo.rgb = lerp(diffuseAlbedo.rgb, drawAlbedo.rgb, drawAlbedo.a);
+    }
 
     float3 normalMapSample = gTerrNormMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
     

@@ -834,10 +834,8 @@ void TexColumnsApp::BuildRootSignature()
 //TERREAIN ROOT SIGNATURE
 void TexColumnsApp::BuildTerrainRootSignature()
 {
-	
-
 	CD3DX12_DESCRIPTOR_RANGE TerrainDiffuseRange;
-	TerrainDiffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1,0);  // Terrain diff t0
+	TerrainDiffuseRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0);  // Terrain diff t0
 
 	CD3DX12_DESCRIPTOR_RANGE TerrainNormalRange;
 	TerrainNormalRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1);  // Terrain norm t1
@@ -845,36 +843,33 @@ void TexColumnsApp::BuildTerrainRootSignature()
 	CD3DX12_DESCRIPTOR_RANGE TerrainDispMap;
 	TerrainDispMap.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2);  // Terrain Disp (HeightMap) t2
 
-	// ДОБАВИТЬ UAV для кисти
-	CD3DX12_DESCRIPTOR_RANGE brushUAVRange;
-	brushUAVRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);  // u0
+	// ===== ДОБАВЛЕНО: SRV для текстуры кисти =====
+	CD3DX12_DESCRIPTOR_RANGE BrushTextureRange;
+	BrushTextureRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 3);  // Brush texture t3
 
-	// УВЕЛИЧИТЬ массив до 8 параметров
-	CD3DX12_ROOT_PARAMETER slotRootParameter[8];
+	// УВЕЛИЧИТЬ массив до 9 параметров (было 8)
+	CD3DX12_ROOT_PARAMETER slotRootParameter[9];
 
 	// SRV текстуры
-	slotRootParameter[0].InitAsDescriptorTable(1, &TerrainDiffuseRange, D3D12_SHADER_VISIBILITY_PIXEL);
-	slotRootParameter[1].InitAsDescriptorTable(1, &TerrainNormalRange, D3D12_SHADER_VISIBILITY_PIXEL);
-	slotRootParameter[2].InitAsDescriptorTable(1, &TerrainDispMap, D3D12_SHADER_VISIBILITY_ALL);
+	slotRootParameter[0].InitAsDescriptorTable(1, &TerrainDiffuseRange, D3D12_SHADER_VISIBILITY_PIXEL);  // t0
+	slotRootParameter[1].InitAsDescriptorTable(1, &TerrainNormalRange, D3D12_SHADER_VISIBILITY_PIXEL);   // t1
+	slotRootParameter[2].InitAsDescriptorTable(1, &TerrainDispMap, D3D12_SHADER_VISIBILITY_ALL);         // t2
+	slotRootParameter[3].InitAsDescriptorTable(1, &BrushTextureRange, D3D12_SHADER_VISIBILITY_PIXEL);    // t3 <-- НОВОЕ
 
 	// CBV
-	slotRootParameter[3].InitAsConstantBufferView(0); // b0
-	slotRootParameter[4].InitAsConstantBufferView(1); // b1
-	slotRootParameter[5].InitAsConstantBufferView(2); // b2
-	slotRootParameter[6].InitAsConstantBufferView(3); // b3
-
-	// ДОБАВИТЬ: cbBrush (b4) и UAV для кисти
-	slotRootParameter[7].InitAsConstantBufferView(4); // b4 - cbBrush
-
-	// НЕ добавляем UAV в графическую root signature - это только для compute!
+	slotRootParameter[4].InitAsConstantBufferView(0); // b0 - cbPerObject
+	slotRootParameter[5].InitAsConstantBufferView(1); // b1 - cbPass
+	slotRootParameter[6].InitAsConstantBufferView(2); // b2 - cbMaterial
+	slotRootParameter[7].InitAsConstantBufferView(3); // b3 - cbTerrainTile
+	slotRootParameter[8].InitAsConstantBufferView(4); // b4 - cbBrush
 
 	auto staticSamplers = GetStaticSamplers();
 
-	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(8, slotRootParameter,
+	// Увеличить количество параметров до 9
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(9, slotRootParameter,
 		(UINT)staticSamplers.size(), staticSamplers.data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
 
-	// create a root signature with a single slot which points to a descriptor range consisting of a single constant buffer
 	ComPtr<ID3DBlob> serializedRootSig = nullptr;
 	ComPtr<ID3DBlob> errorBlob = nullptr;
 	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
@@ -892,7 +887,7 @@ void TexColumnsApp::BuildTerrainRootSignature()
 		serializedRootSig->GetBufferSize(),
 		IID_PPV_ARGS(mTerrainRootSignature.GetAddressOf())));
 
-
+	OutputDebugStringA("Terrain root signature created with brush texture slot (t3)\n");
 }
 
 void TexColumnsApp::BuildCsRootSignature()
@@ -2158,47 +2153,44 @@ void TexColumnsApp::DrawTilesRenderItems(ID3D12GraphicsCommandList* cmdList, con
 
 		CD3DX12_GPU_DESCRIPTOR_HANDLE baseHandle(mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart());
 
+		// t0 - Terrain diffuse
 		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainDiffHandle = baseHandle;
 		terrainDiffHandle.Offset(TexOffsets["terrainDiff"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(0, terrainDiffHandle);  // t0 - Terrain diffuse
+		cmdList->SetGraphicsRootDescriptorTable(0, terrainDiffHandle);
 
+		// t1 - Terrain normal
 		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainNormHandle = baseHandle;
 		terrainNormHandle.Offset(TexOffsets["terrainNorm"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(1, terrainNormHandle);   // t1 - Terrain normal
+		cmdList->SetGraphicsRootDescriptorTable(1, terrainNormHandle);
 
+		// t2 - Terrain displacement
 		CD3DX12_GPU_DESCRIPTOR_HANDLE terrainDispHandle = baseHandle;
 		terrainDispHandle.Offset(TexOffsets["terrainDisp"], mCbvSrvDescriptorSize);
-		cmdList->SetGraphicsRootDescriptorTable(2, terrainDispHandle);     // t2 - Terrain displacement
+		cmdList->SetGraphicsRootDescriptorTable(2, terrainDispHandle);
 
-		// CBV b0 (корневой индекс 3) - cbPerObject
+		// === t3 - Brush texture (НОВОЕ) ===
+		CD3DX12_GPU_DESCRIPTOR_HANDLE brushTextureHandle = baseHandle;
+		brushTextureHandle.Offset(mBrushTextureSRVIndex, mCbvSrvDescriptorSize);
+		cmdList->SetGraphicsRootDescriptorTable(3, brushTextureHandle);
+
+		// CBV b0 (корневой индекс 4) - cbPerObject
 		D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
-		cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
+		cmdList->SetGraphicsRootConstantBufferView(4, objCBAddress);
 
-		// CBV b1 (корневой индекс 4) - cbPass - устанавливается в Draw()
-		// CBV b2 (корневой индекс 5) - cbMaterial
+		// CBV b1 (корневой индекс 5) - cbPass - устанавливается в Draw()
+		// CBV b2 (корневой индекс 6) - cbMaterial
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
-		cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
+		cmdList->SetGraphicsRootConstantBufferView(6, matCBAddress);
 
-		// CBV b3 (корневой индекс 6) - cbTerrainTile
+		// CBV b3 (корневой индекс 7) - cbTerrainTile
 		auto terrCB = mCurrFrameResource->TerrainCB->Resource();
-		cmdList->SetGraphicsRootConstantBufferView(6, terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize);
+		cmdList->SetGraphicsRootConstantBufferView(7, terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize);
 
-		// CBV b4 (корневой индекс 7) - cbBrush - устанавливается отдельно
+		// CBV b4 (корневой индекс 8) - cbBrush
 		auto brushCB = mCurrFrameResource->BrushCB->Resource();
-		cmdList->SetGraphicsRootConstantBufferView(7, brushCB->GetGPUVirtualAddress());
+		cmdList->SetGraphicsRootConstantBufferView(8, brushCB->GetGPUVirtualAddress());
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
-
-		/*D3D12_GPU_VIRTUAL_ADDRESS objCBAddress = objectCB->GetGPUVirtualAddress() + ri->ObjCBIndex * objCBByteSize;
-		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
-
-		cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);
-		cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);
-
-		auto terrCB = mCurrFrameResource->TerrainCB->Resource();
-		mCommandList->SetGraphicsRootConstantBufferView(6, terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize);
-
-		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);*/
 	}
 }
 
@@ -2208,28 +2200,13 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	frameCount++;
 
 	char debugMsg[256];
-	//sprintf_s(debugMsg, "=== Frame %d started ===\n", frameCount);
-	//OutputDebugStringA(debugMsg);
 
 	try
 	{
-		//OutputDebugStringA("1. Getting command allocator...\n");
 		auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
-
-		//OutputDebugStringA("2. Resetting command allocator...\n");
-		// Reuse the memory associated with command recording.
-		// We can only reset when the associated command lists have finished execution on the GPU.
 		HRESULT hr = cmdListAlloc->Reset();
-		if (FAILED(hr))
-		{
-			sprintf_s(debugMsg, "FAILED to reset command allocator: 0x%08X\n", hr);
-			OutputDebugStringA(debugMsg);
-			ThrowIfFailed(hr);
-		}
+		if (FAILED(hr)) ThrowIfFailed(hr);
 
-		//OutputDebugStringA("3. Resetting command list...\n");
-		// A command list can be reset after it has been added to the command queue via ExecuteCommandList.
-		// Reusing the command list reuses memory.
 		if (isFillModeSolid)
 		{
 			hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get());
@@ -2238,125 +2215,40 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		{
 			hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["wireframe"].Get());
 		}
+		if (FAILED(hr)) ThrowIfFailed(hr);
 
-		if (FAILED(hr))
-		{
-			sprintf_s(debugMsg, "FAILED to reset command list: 0x%08X\n", hr);
-			OutputDebugStringA(debugMsg);
-			ThrowIfFailed(hr);
-		}
-
-		//OutputDebugStringA("4. Setting viewport and scissor...\n");
 		mCommandList->RSSetViewports(1, &mScreenViewport);
 		mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-		//OutputDebugStringA("5. Transition back buffer to RENDER_TARGET...\n");
-		// Indicate a state transition on the resource usage.
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 			D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
-		//OutputDebugStringA("6. Clearing buffers...\n");
-		// Clear the back buffer and depth buffer.
 		mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
 		mCommandList->ClearDepthStencilView(DepthStencilView(), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-		//OutputDebugStringA("7. Setting render targets...\n");
-		// Specify the buffers we are going to render to.
 		mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, &DepthStencilView());
 
-		//OutputDebugStringA("8. Setting descriptor heaps...\n");
-		ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
-		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-
-		//OutputDebugStringA("9. Setting main root signature...\n");
-		mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-
-		
-
-
-		//OutputDebugStringA("10. Setting pass constant buffer...\n");
-		auto passCB = mCurrFrameResource->PassCB->Resource();
-		mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
-
-		DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
-
-		//OutputDebugStringA("11. Getting visible tiles...\n");
-		//Draw Terrain
-		mVisibleTiles.clear();
-		mVisibleTiles = mTerrain->GetVisibleTiles();
-
-		if (!mVisibleTiles.empty())
-		{
-			sprintf_s(debugMsg, "Rendering %d visible tiles\n", (int)mVisibleTiles.size());
-			OutputDebugStringA(debugMsg);
-		
-			//OutputDebugStringA("12. Setting terrain PSO...\n");
-			// Установка PSO для террейна
-			if (isFillModeSolid)
-				mCommandList->SetPipelineState(mPSOs["terrain"].Get());
-			else
-				mCommandList->SetPipelineState(mPSOs["wireTerrain"].Get());
-
-			//OutputDebugStringA("13. Setting terrain root signature...\n");
-			// Установка корневой сигнатуры для террейна
-			mCommandList->SetGraphicsRootSignature(mTerrainRootSignature.Get());
-
-			//OutputDebugStringA("14. Setting pass CB for terrain...\n");
-			// Устанавливаем cbPass (b1, индекс 4 в TerrainRootSignature)
-			mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
-
-			//OutputDebugStringA("15. Drawing tiles...\n");
-			// Отрисовка тайлов
-			DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
-
-			//OutputDebugStringA("16. Restoring main PSO...\n");
-			// Возвращаемся к основной PSO
-			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-			if (isFillModeSolid)
-				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
-			else
-				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
-
-
-		}
-		else
-		{
-			OutputDebugStringA("No visible tiles to render\n");
-		}
-
-		// ============ ВЫПОЛНЕНИЕ COMPUTE SHADER ДО ОСНОВНОГО РЕНДЕРИНГА ============
+		// ============ ВЫПОЛНЕНИЕ COMPUTE SHADER ============
+		// ДОЛЖНО БЫТЬ ДО основного рендеринга!
 		if (mIsPainting)
 		{
 			OutputDebugStringA("=== EXECUTING COMPUTE SHADER ===\n");
 
-			// 1. Сохраняем текущие графические настройки (если нужно)
-			// Или просто переключаемся на compute
-
-			// 2. Устанавливаем Compute PSO и root signature
+			// Устанавливаем Compute PSO и root signature
 			mCommandList->SetPipelineState(mPSOs["brushCompute"].Get());
 			mCommandList->SetComputeRootSignature(mBrushComputeRootSignature.Get());
 
-			// 3. Барьер для перевода текстуры
+			// Барьер для перевода текстуры
 			CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
 				mBrushTexture.Get(),
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 				D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 			mCommandList->ResourceBarrier(1, &barrier);
 
-			// 4. Устанавливаем корневые параметры для COMPUTE SHADER:
+			// Устанавливаем корневые параметры
+			auto brushCB = mCurrFrameResource->BrushCB->Resource();
+			mCommandList->SetComputeRootConstantBufferView(0, brushCB->GetGPUVirtualAddress()); // b0
 
-			// === ПРОВЕРЬТЕ ВАШУ ROOT SIGNATURE! ===
-			// По вашему BuildCsRootSignature():
-			// Индекс 0: b0 (BrushCB) 
-			// Индекс 1: b1 (TerrainCB)  
-			// Индекс 2: t0 (Карта высот SRV)
-			// Индекс 3: u0 (Текстура кисти UAV)
-
-			// Но в коде вы устанавливаете:
-			// SetComputeRootConstantBufferView(1, brushCB) - это b1, должно быть b0!
-			// SetComputeRootConstantBufferView(0, terrainCB) - это b0, должно быть b1!
-
-			// ИСПРАВЬТЕ:
 			if (!mVisibleTiles.empty())
 			{
 				auto tile = mVisibleTiles[0];
@@ -2365,9 +2257,6 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 				D3D12_GPU_VIRTUAL_ADDRESS terrainCBAddress = terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize;
 				mCommandList->SetComputeRootConstantBufferView(1, terrainCBAddress); // b1
 			}
-
-			auto brushCB = mCurrFrameResource->BrushCB->Resource();
-			mCommandList->SetComputeRootConstantBufferView(0, brushCB->GetGPUVirtualAddress()); // b0
 
 			// SRV для карты высот (t0) - индекс 2
 			CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(
@@ -2383,49 +2272,73 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 				mCbvSrvDescriptorSize);
 			mCommandList->SetComputeRootDescriptorTable(3, uavHandle);
 
-			// 5. Диспатчим Compute Shader
+			// Диспатчим Compute Shader
 			UINT threadGroupsX = (UINT)ceil(mBrushTextureWidth / 16.0f);
 			UINT threadGroupsY = (UINT)ceil(mBrushTextureHeight / 16.0f);
 
-			char debugMsg[256];
 			sprintf_s(debugMsg, "Dispatch: %dx%d thread groups\n", threadGroupsX, threadGroupsY);
 			OutputDebugStringA(debugMsg);
 
 			mCommandList->Dispatch(threadGroupsX, threadGroupsY, 1);
 
-			// 6. Возвращаем текстуру в SRV состояние
+			// Возвращаем текстуру в SRV состояние
 			barrier = CD3DX12_RESOURCE_BARRIER::Transition(
 				mBrushTexture.Get(),
 				D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 			mCommandList->ResourceBarrier(1, &barrier);
 
-			// ===== ВАЖНО: ВОЗВРАЩАЕМ ГРАФИЧЕСКИЕ НАСТРОЙКИ! =====
-			OutputDebugStringA("Restoring graphics pipeline...\n");
-
-			// Возвращаем графическую root signature (основную)
+			// Возвращаем графические настройки
 			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-
-			// Возвращаем графический PSO
 			if (isFillModeSolid)
 				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
 			else
 				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
 
-			// Возвращаем дескрипторные хипы (если нужно)
-			ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
-			mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
-
-			// Устанавливаем pass CB обратно
-			auto passCB = mCurrFrameResource->PassCB->Resource();
-			mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
-
 			OutputDebugStringA("Compute shader executed successfully\n");
 		}
+		// =================================================
 
-		// ===========================================================================
+		// Устанавливаем дескрипторные хипы ДЛЯ ГРАФИКИ
+		ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+		// Основной рендеринг
+		mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+		auto passCB = mCurrFrameResource->PassCB->Resource();
+		mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
+
+		DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
+
+		// Рендеринг террейна
+		mVisibleTiles.clear();
+		mVisibleTiles = mTerrain->GetVisibleTiles();
+
+		if (!mVisibleTiles.empty())
+		{
+			sprintf_s(debugMsg, "Rendering %d visible tiles\n", (int)mVisibleTiles.size());
+			OutputDebugStringA(debugMsg);
+
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["terrain"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["wireTerrain"].Get());
+
+			mCommandList->SetGraphicsRootSignature(mTerrainRootSignature.Get());
+			mCommandList->SetGraphicsRootConstantBufferView(5, passCB->GetGPUVirtualAddress());
+
+			DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
+
+			// Возвращаемся к основной PSO
+			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
+		}
 
 		// ============ ДЕБАГ РЕНДЕРИНГ ТЕКСТУРЫ КИСТИ ============
+		// ДОЛЖНО БЫТЬ ПОСЛЕ compute shader и ДО ImGui!
 		if (mShowDebugTexture)
 		{
 			OutputDebugStringA("Debug rendering brush texture...\n");
@@ -2434,40 +2347,40 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 			D3D12_VIEWPORT savedViewport = mScreenViewport;
 			D3D12_RECT savedScissor = mScissorRect;
 
-			// Настройки для дебаг окна (маленькое окно в углу)
+			// Настройки для дебаг окна (справа вверху)
 			D3D12_VIEWPORT debugViewport;
-			debugViewport.TopLeftX = 10.0f;
-			debugViewport.TopLeftY = 20.0f;
-			debugViewport.Width = 256.0f;    // Размер дебаг окна
+			debugViewport.TopLeftX = mScreenViewport.Width - 256.0f - 10.0f; // Правая сторона с отступом 10px
+			debugViewport.TopLeftY = 10.0f;                                   // Верх с отступом 10px
+			debugViewport.Width = 256.0f;                                     // Размер 256x256
 			debugViewport.Height = 256.0f;
 			debugViewport.MinDepth = 0.0f;
-			debugViewport.MaxDepth = 5.0f;
+			debugViewport.MaxDepth = 1.0f;
 
 			D3D12_RECT debugScissor;
-			debugScissor.left = 10;
-			debugScissor.top = 10;
-			debugScissor.right = 10 + 256;
-			debugScissor.bottom = 10 + 256;
+			debugScissor.left = mScreenViewport.Width - 256.0f - 10.0f;   // Та же позиция X
+			debugScissor.top = 10;                                                // Та же позиция Y
+			debugScissor.right = debugScissor.left + 256;                         // Ширина 256
+			debugScissor.bottom = debugScissor.top + 256;                         // Высота 256
 
 			mCommandList->RSSetViewports(1, &debugViewport);
 			mCommandList->RSSetScissorRects(1, &debugScissor);
 
-			// Устанавливаем дебаг PSO
-			mCommandList->SetPipelineState(mPSOs["terrain"].Get());
+			// Устанавливаем дебаг PSO (важно: используем debug PSO, не terrain!)
+			mCommandList->SetPipelineState(mPSOs["debugQuad"].Get()); 
 			mCommandList->SetGraphicsRootSignature(mDebugRootSignature.Get());
 
-			// Устанавливаем текстуру кисти как SRV
+			// Устанавливаем текстуру кисти как SRV (ВАЖНО: дескрипторные хипы уже установлены выше)
 			CD3DX12_GPU_DESCRIPTOR_HANDLE brushSrvHandle(
 				mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
 				mBrushTextureSRVIndex,
 				mCbvSrvDescriptorSize);
 			mCommandList->SetGraphicsRootDescriptorTable(0, brushSrvHandle);
 
-			//Используем правильный доступ к геометрии из map
-			auto& debugGeo = mDebugGeometries["debugQuad"]; // Получаем unique_ptr из map
-
-			if (debugGeo) // Проверяем, что геометрия существует
+			// Получаем геометрию (исправлено имя ключа)
+			auto debugGeoIt = mDebugGeometries.find("debugQuadGeo"); // Исправлено: было "debugQuad"
+			if (debugGeoIt != mDebugGeometries.end() && debugGeoIt->second)
 			{
+				auto& debugGeo = debugGeoIt->second;
 				D3D12_VERTEX_BUFFER_VIEW vbv = debugGeo->VertexBufferView();
 				D3D12_INDEX_BUFFER_VIEW ibv = debugGeo->IndexBufferView();
 
@@ -2476,14 +2389,24 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 				mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 				// Рисуем дебаг квад
-				auto& submesh = debugGeo->DrawArgs["debugQuad"];
-				mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1, submesh.StartIndexLocation, submesh.BaseVertexLocation, 0);
+				auto submeshIt = debugGeo->DrawArgs.find("debugQuad");
+				if (submeshIt != debugGeo->DrawArgs.end())
+				{
+					auto& submesh = submeshIt->second;
+					mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1,
+						submesh.StartIndexLocation, submesh.BaseVertexLocation, 0);
+				}
+				else
+				{
+					OutputDebugStringA("ERROR: 'debugQuad' not found in DrawArgs!\n");
+				}
 			}
 			else
 			{
-				OutputDebugStringA("ERROR: Debug geometry not found!\n");
+				sprintf_s(debugMsg, "ERROR: Debug geometry 'debugQuadGeo' not found! Map size: %zu\n",
+					mDebugGeometries.size());
+				OutputDebugStringA(debugMsg);
 			}
-
 
 			// Восстанавливаем viewport/scissor
 			mCommandList->RSSetViewports(1, &savedViewport);
@@ -2491,89 +2414,48 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 
 			// Возвращаемся к основному рендерингу
 			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-			mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
 
 			OutputDebugStringA("Debug rendering complete\n");
 		}
 		// =======================================================
-		//OutputDebugStringA("17. Rendering ImGui...\n");
-		//ImGui::EndFrame();
 
-		// Установка heap ImGui для отрисовки
-		ID3D12DescriptorHeap* heaps[] = { mImGuiSrvDescriptorHeap.Get() };
-		mCommandList->SetDescriptorHeaps(_countof(heaps), heaps);
+		// ImGui рендеринг (последний)
+		ID3D12DescriptorHeap* imguiHeaps[] = { mImGuiSrvDescriptorHeap.Get() };
+		mCommandList->SetDescriptorHeaps(_countof(imguiHeaps), imguiHeaps);
 
 		ImGui::Render();
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
 
-		//OutputDebugStringA("18. Restoring main descriptor heap...\n");
-		// Возвращаем основной heap
+		// Возвращаем основной heap (если нужно дальше)
 		ID3D12DescriptorHeap* mainHeaps[] = { mSrvDescriptorHeap.Get() };
 		mCommandList->SetDescriptorHeaps(_countof(mainHeaps), mainHeaps);
 
-
-		//OutputDebugStringA("19. Transition back buffer to PRESENT...\n");
-		// Indicate a state transition on the resource usage.
+		// Завершение кадра
 		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(CurrentBackBuffer(),
 			D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));
 
-		//OutputDebugStringA("20. Closing command list...\n");
-		// Done recording commands.
 		hr = mCommandList->Close();
-		if (FAILED(hr))
-		{
-			//sprintf_s(debugMsg, "FAILED to close command list: 0x%08X\n", hr);
-			//OutputDebugStringA(debugMsg);
-			ThrowIfFailed(hr);
-		}
+		if (FAILED(hr)) ThrowIfFailed(hr);
 
-		//OutputDebugStringA("21. Executing command lists...\n");
-		// Add the command list to the queue for execution.
 		ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
 		mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
 
-		//OutputDebugStringA("22. Presenting swap chain...\n");
-		// Swap the back and front buffers
 		hr = mSwapChain->Present(0, 0);
-		if (FAILED(hr))
-		{
-			//sprintf_s(debugMsg, "FAILED to present swap chain: 0x%08X\n", hr);
-			//OutputDebugStringA(debugMsg);
-			ThrowIfFailed(hr);
-		}
+		if (FAILED(hr)) ThrowIfFailed(hr);
 
 		mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
-
-		//OutputDebugStringA("23. Updating fence...\n");
-		// Advance the fence value to mark commands up to this fence point.
 		mCurrFrameResource->Fence = ++mCurrentFence;
-
-		//OutputDebugStringA("24. Signaling fence...\n");
-		// Add an instruction to the command queue to set a new fence point. 
-		// Because we are on the GPU timeline, the new fence point won't be 
-		// set until the GPU finishes processing all the commands prior to this Signal().
 		hr = mCommandQueue->Signal(mFence.Get(), mCurrentFence);
-		if (FAILED(hr))
-		{
-			//sprintf_s(debugMsg, "FAILED to signal fence: 0x%08X\n", hr);
-			//OutputDebugStringA(debugMsg);
-			ThrowIfFailed(hr);
-		}
-	}
-	catch (const std::exception& e)
-	{
-		//sprintf_s(debugMsg, "EXCEPTION in Draw(): %s\n", e.what());
-		//OutputDebugStringA(debugMsg);
-		throw;
+		if (FAILED(hr)) ThrowIfFailed(hr);
 	}
 	catch (...)
 	{
-		//OutputDebugStringA("UNKNOWN EXCEPTION in Draw()\n");
 		throw;
 	}
-
-	//sprintf_s(debugMsg, "=== Frame %d completed ===\n", frameCount);
-	OutputDebugStringA(debugMsg);
 }
 
 std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> TexColumnsApp::GetStaticSamplers()
