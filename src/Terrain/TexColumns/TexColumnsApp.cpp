@@ -208,7 +208,7 @@ private:
 	float BrushRadius=30;
 	float BrushFalloffRadius=40;
 	int mIsPainting = 0;
-	bool mShowDebugTexture = true;
+	//bool mShowDebugTexture = true;
 };
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE prevInstance,
@@ -266,13 +266,13 @@ bool TexColumnsApp::Initialize()
 	BuildTerrainRootSignature();
 	BuildCsRootSignature();
 	BuildDescriptorHeaps();
-	BuildDebugRootSignature();
+	//BuildDebugRootSignature();
 
 	InitTerrain();
 
 	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
-	BuildDebugGeometry();
+	//BuildDebugGeometry();
 
 	BuildTerrainGeometry();
 
@@ -409,7 +409,7 @@ void TexColumnsApp::SetupImGui()
 	ImGui::Text("Total Tiles: %d", mTerrain->GetAllTiles().size());
 	//ImGui::DragFloat3("Terrain offset", &terrainOffset.x, 1.0f, -1000.0f, 1000.0f);
 	ImGui::Checkbox("Show Bounding Box", &showTilesBoundingBox);
-	ImGui::Checkbox("Show Debug Texture", &mShowDebugTexture);
+	//ImGui::Checkbox("Show Debug Texture", &mShowDebugTexture);
 	
 	ImGui::SetWindowSize(ImVec2(300, 500)); // ������, ������
 	ImGui::SetWindowPos(ImVec2(5, 5));   // X, Y �������
@@ -939,7 +939,7 @@ void TexColumnsApp::BuildCsRootSignature()
 		IID_PPV_ARGS(mBrushComputeRootSignature.GetAddressOf())));
 }
 
-void TexColumnsApp::BuildDebugRootSignature()
+/*void TexColumnsApp::BuildDebugRootSignature()
 {
 	CD3DX12_DESCRIPTOR_RANGE texTable;
 	texTable.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0
@@ -975,7 +975,7 @@ void TexColumnsApp::BuildDebugRootSignature()
 		serializedRootSig->GetBufferPointer(),
 		serializedRootSig->GetBufferSize(),
 		IID_PPV_ARGS(mDebugRootSignature.GetAddressOf())));
-}
+}*/
 
 void TexColumnsApp::BuildDescriptorHeaps()
 {
@@ -1207,8 +1207,8 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	//mShaders["debugVS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "VS", "vs_5_1");
 	//mShaders["debugPS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "PS", "ps_5_1");
 
-	mShaders["debugVS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "VS", "vs_5_1");
-	mShaders["debugPS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "PS", "ps_5_1");
+	//mShaders["debugVS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "VS", "vs_5_1");
+	//mShaders["debugPS"] = d3dUtil::CompileShader(L"Shaders\\Debug.hlsl", nullptr, "PS", "ps_5_1");
 
 	mInputLayout =
 	{
@@ -1218,11 +1218,11 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 		{ "TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 	};
 
-	mDebugInputLayout =
+	/*mDebugInputLayout =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-	};
+	}*/;
 
 	//debugInputLayout =
 	//{
@@ -1289,37 +1289,6 @@ void TexColumnsApp::BuildPSOs()
 
 	OutputDebugStringA("=== Building PSOs ===\n");
 
-	// 1. Сначала проверим все ресурсы
-	if (!mBrushComputeRootSignature)
-	{
-		OutputDebugStringA("ERROR: mBrushComputeRootSignature is null!\n");
-		return;
-	}
-
-	if (!mTerrainRootSignature)
-	{
-		OutputDebugStringA("ERROR: mTerrainRootSignature is null!\n");
-		return;
-	}
-
-	if (!mShaders["brushCS"])
-	{
-		OutputDebugStringA("ERROR: brushCS shader is null!\n");
-		return;
-	}
-
-	if (!mShaders["terrainVS"])
-	{
-		OutputDebugStringA("ERROR: terrainVS shader is null!\n");
-		return;
-	}
-
-	if (!mShaders["terrainPS"])
-	{
-		OutputDebugStringA("ERROR: terrainPS shader is null!\n");
-		return;
-	}
-
 	OutputDebugStringA("Creating Compute PSO...\n");
 	// 2. Compute PSO
 	D3D12_COMPUTE_PIPELINE_STATE_DESC computePsoDesc;
@@ -1385,7 +1354,7 @@ void TexColumnsApp::BuildPSOs()
 	//
 	// Дебаг PSO
 	//
-	OutputDebugStringA("Creating Debug PSO...\n");
+	/*OutputDebugStringA("Creating Debug PSO...\n");
 
 	D3D12_GRAPHICS_PIPELINE_STATE_DESC debugPsoDesc = {};
 	debugPsoDesc.InputLayout = { mDebugInputLayout.data(), (UINT)mDebugInputLayout.size() };
@@ -1414,7 +1383,7 @@ void TexColumnsApp::BuildPSOs()
 	debugPsoDesc.SampleDesc.Quality = 0;
 	debugPsoDesc.DSVFormat = mDepthStencilFormat;
 
-	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&debugPsoDesc, IID_PPV_ARGS(&mPSOs["debugQuad"])));
+	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(&debugPsoDesc, IID_PPV_ARGS(&mPSOs["debugQuad"])));*/
 	//PSO for debug
 	/*D3D12_GRAPHICS_PIPELINE_STATE_DESC debugPSODesc = {};
 	debugPSODesc.pRootSignature = mTerrainRootSignature.Get(); // �� ������ root signature
@@ -1482,7 +1451,10 @@ void TexColumnsApp::BuildFrameResources()
 	}
 }
 
-void TexColumnsApp::BuildDebugGeometry()
+/// <summary>
+/// It's works, but now useless
+/// </summary>
+/*void TexColumnsApp::BuildDebugGeometry()
 {
 	GeometryGenerator::MeshData quad;
 
@@ -1558,7 +1530,7 @@ void TexColumnsApp::BuildDebugGeometry()
 	// Сохраняем в mDebugGeo и в общую коллекцию
 	mDebugGeometries[geo->Name] = std::move(geo);
 	//mGeometries[mDebugGeo->Name] = std::move(mDebugGeo);
-}
+}*/
 
 void TexColumnsApp::BuildShapeGeometry()
 {
@@ -2339,7 +2311,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 
 		// ============ ДЕБАГ РЕНДЕРИНГ ТЕКСТУРЫ КИСТИ ============
 		// ДОЛЖНО БЫТЬ ПОСЛЕ compute shader и ДО ImGui!
-		if (mShowDebugTexture)
+		/*if (mShowDebugTexture)
 		{
 			OutputDebugStringA("Debug rendering brush texture...\n");
 
@@ -2420,7 +2392,7 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
 
 			OutputDebugStringA("Debug rendering complete\n");
-		}
+		}*/
 		// =======================================================
 
 		// ImGui рендеринг (последний)
