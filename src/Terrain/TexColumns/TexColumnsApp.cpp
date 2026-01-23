@@ -198,8 +198,8 @@ private:
 	float mTerrainSize = 1024;
 	std::vector<Tile*> mVisibleTiles;
 
-	float mCameraVertSpeed = 400;
-	float mCameraHorSpeed = 400;
+	float mCameraVertSpeed = 500;
+	float mCameraHorSpeed = 500;
 
 	int controlMode = 0; //0 - camera, 1 - terrain brush 
 
