@@ -17,7 +17,9 @@
 #include <cstdint>
 #include <DirectXMath.h>
 #include <vector>
-
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
 class GeometryGenerator
 {
 public:
@@ -55,11 +57,19 @@ public:
 		DirectX::XMFLOAT2 TexC;
 	};
 
+	struct Material
+	{
+		std::string name;
+		std::string normFile;
+		std::string diffFile;
+	};
+
 	struct MeshData
 	{
 		std::vector<Vertex> Vertices;
 		std::vector<uint32> Indices32;
-
+		std::string matName;
+		std::string texfile;
 		std::vector<uint16>& GetIndices16()
 		{
 			if (mIndices16.empty())
