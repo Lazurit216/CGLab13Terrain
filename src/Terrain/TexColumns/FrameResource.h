@@ -32,6 +32,8 @@ struct PassConstants
 
     DirectX::XMFLOAT4 AmbientLight = { 0.0f, 0.0f, 0.0f, 1.0f };
 
+    DirectX::XMFLOAT4X4 JitteredViewProj;
+    DirectX::XMFLOAT4X4 PrevViewProj;
     // Indices [0, NUM_DIR_LIGHTS) are directional lights;
     // indices [NUM_DIR_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHTS) are point lights;
     // indices [NUM_DIR_LIGHTS+NUM_POINT_LIGHTS, NUM_DIR_LIGHTS+NUM_POINT_LIGHT+NUM_SPOT_LIGHTS)
@@ -87,6 +89,13 @@ struct TileConstants
     float Padding2;
 };
 
+struct TAAConstants
+{
+    float blendFactor = 0.01f;
+    DirectX::XMFLOAT3 pad;
+
+};
+
 // Stores the resources needed for the CPU to build the command lists
 // for a frame.  
 struct FrameResource
@@ -110,6 +119,7 @@ public:
     std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
     std::unique_ptr<UploadBuffer<TileConstants>> TerrainCB = nullptr;
     std::unique_ptr<UploadBuffer<BrushConstants>> BrushCB = nullptr;
+    std::unique_ptr<UploadBuffer<TAAConstants>> TAACB = nullptr;
     // Fence value to mark commands up to this fence point.  This lets us
     // check if these frame resources are still in use by the GPU.
     UINT64 Fence = 0;

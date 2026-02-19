@@ -12,6 +12,7 @@ FrameResource::FrameResource(ID3D12Device* device, UINT passCount, UINT objectCo
     ObjectCB = std::make_unique<UploadBuffer<ObjectConstants>>(device, objectCount, true);
     TerrainCB = std::make_unique<UploadBuffer<TileConstants>>(device, tileCount, true);
     BrushCB = std::make_unique<UploadBuffer<BrushConstants>>(device, brushCount, true);
+    TAACB = std::make_unique<UploadBuffer<TAAConstants>>(device, passCount, true);
 }
 
 FrameResource::~FrameResource()
