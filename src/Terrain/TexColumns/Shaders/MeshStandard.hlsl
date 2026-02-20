@@ -20,6 +20,7 @@ Texture2D gNormalMap : register(t1);
 cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
+    float4x4 gPrevWorld;
     float4x4 gTexTransform;
 };
 
@@ -40,6 +41,8 @@ cbuffer cbPass : register(b1)
     float gTotalTime;
     float gDeltaTime;
     float4 gAmbientLight;
+    float4x4 gJitteredViewProj;
+    float4x4 prevViewProj;
     Light gLights[MaxLights];
 };
 
@@ -91,7 +94,8 @@ VertexOut VS(VertexIn vin)
     vout.TexC = mul(float4(vin.TexC, 0.0f, 1.0f), gTexTransform).xy;
     
     // ѕреобразование в пространство клипа
-    vout.PosH = mul(posW, gViewProj);
+    vout.PosH = mul(posW, gJitteredViewProj);
+    //vout.PosH = mul(posW, gViewProj);
     
     return vout;
 }

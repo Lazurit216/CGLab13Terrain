@@ -1,5 +1,8 @@
 #pragma once
-#include "d3dUtil.h"
+#include <wrl.h>
+#include <d3d12.h>
+#include "d3dUtil.h" 
+using namespace Microsoft::WRL;
 
 class TAATexture
 {

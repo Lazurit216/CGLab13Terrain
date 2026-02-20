@@ -21,6 +21,7 @@ Texture2D gBrushTexture : register(t3); // t3 - текстура кисти (SRV)
 cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
+    float4x4 gPrevWorld;
     float4x4 gTexTransform;
 };
 
@@ -42,6 +43,8 @@ cbuffer cbPass : register(b1)
     float gTotalTime;
     float gDeltaTime;
     float4 gAmbientLight;
+    float4x4 gJitteredViewProj;
+    float4x4 prevViewProj;
     Light gLights[MaxLights];
     
     //int isBrushMode;
@@ -170,7 +173,8 @@ VertexOut VS(VertexIn vin)
     vout.TangentW = normalize(mul(tangent, (float3x3) gWorld));
     
     // Трансформируем в clip space
-    vout.PosH = mul(posW, gViewProj);
+    //vout.PosH = mul(posW, gViewProj);
+    vout.PosH = mul(posW, gJitteredViewProj);
     
     return vout;
 }

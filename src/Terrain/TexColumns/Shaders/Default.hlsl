@@ -30,6 +30,7 @@ Texture2D gDispMap : register(t2);
 cbuffer cbPerObject : register(b0)
 {
     float4x4 gWorld;
+    float4x4 gPrevWorld;
     float4x4 gTexTransform;
 };
 
@@ -51,6 +52,8 @@ cbuffer cbPass : register(b1)
     float gTotalTime;
     float gDeltaTime;
     float4 gAmbientLight;
+    float4x4 gJitteredViewProj;
+    float4x4 prevViewProj;
     Light gLights[MaxLights];
     
     //int isBrushMode;
@@ -232,7 +235,9 @@ DS_OUTPUT DS(HS_CONSTANT_DATA_OUTPUT input,
     dout.TanW = normalize(dout.TanW);
   
     // 5. Трансформация ИНТЕРПОЛИРОВАННОЙ мировой позиции в Clip Space
-    dout.PosH = mul(float4(dout.PosW, 1.0f), gViewProj);
+    
+    //dout.PosH = mul(float4(dout.PosW, 1.0f), gViewProj);
+    dout.PosH = mul(float4(dout.PosW, 1.0f), gJitteredViewProj);
 
     // Возвращаем структуру для Пиксельного Шейдера
     return dout;
