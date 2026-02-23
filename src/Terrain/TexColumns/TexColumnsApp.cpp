@@ -934,7 +934,7 @@ void TexColumnsApp::UpdateObjectCBs(const GameTimer& gt)
 		{
 			e->PrevWorld = e->World;
 
-			if (e->Name == "maxwell")
+			if (e->Name == "Guard2")
 			{
 				// Загружаем текущую матрицу
 				XMMATRIX currentWorld = XMLoadFloat4x4(&e->World);
@@ -3044,8 +3044,9 @@ void TexColumnsApp::BuildRenderItems()
 		mAllRitems.push_back(std::move(renderItem));
 	}
 
-	RenderCustomMesh("Guard", "Guard", "", XMMatrixScaling(2, 2, 2), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(100, 160, 100));
-	RenderCustomMesh("maxwell", "maxwell", "", XMMatrixScaling(1., 1., 1.), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(20, 50, 30));
+	RenderCustomMesh("Guard", "Guard", "", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(100, 160, 100));
+	RenderCustomMesh("Guard2", "Guard", "", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(50, 160, 100));
+	RenderCustomMesh("maxwell", "maxwell", "", XMMatrixScaling(1., 1., 1.), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(75, 100, 110));
 }
 
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
