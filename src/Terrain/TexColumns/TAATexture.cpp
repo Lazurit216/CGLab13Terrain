@@ -17,6 +17,7 @@ TAATexture::TAATexture(ID3D12Device* device,
 
 void TAATexture::CreateResource()
 {
+
     auto heapProps = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 
     D3D12_RESOURCE_DESC desc = CD3DX12_RESOURCE_DESC::Tex2D(

@@ -101,6 +101,12 @@ struct VertexOut
     float3 Tan : TANGENT;
 };
 
+struct PixelOut
+{
+    float4 Color : SV_Target0; // Основной цвет (в color buffer)
+    float4 Velocity : SV_Target1; // Velocity (в velocity buffer)
+};
+
 VertexOut VS(VertexIn vin)
 {
     VertexOut vout;
@@ -207,6 +213,8 @@ struct DS_OUTPUT
     float2 TexC : TEXCOORD0; // Текстурные координаты
     float2 decalUV : TEXCOORD1; // Текстурные координаты
     float3 TanW : TANGENT; // Касательная в мире (для normal mapping)
+    float4 CurPosH : POSITION2; // Текущая позиция БЕЗ джиттера (для velocity)
+    float4 PrevPosH : POSITION3; // Предыдущая позиция (для velocity)
 };
 
 [domain("tri")]
@@ -236,9 +244,18 @@ DS_OUTPUT DS(HS_CONSTANT_DATA_OUTPUT input,
   
     // 5. Трансформация ИНТЕРПОЛИРОВАННОЙ мировой позиции в Clip Space
     
-    //dout.PosH = mul(float4(dout.PosW, 1.0f), gViewProj);
+     // Текущая позиция с джиттером (для рендера)
     dout.PosH = mul(float4(dout.PosW, 1.0f), gJitteredViewProj);
-
+    
+    // Текущая позиция без джиттера (для velocity)
+    dout.CurPosH = mul(float4(dout.PosW, 1.0f), gViewProj);
+    //dout.CurPosH /= dout.CurPosH.w;
+    // Предыдущая позиция (для velocity)
+    // Для предыдущей позиции нужна предыдущая мировая позиция
+    // Это сложно с тесселяцией, используем приближение
+    float4 prevPosW = float4(dout.PosW - (gEyePosW - gEyePosW), 1.0f); // Упрощенно
+    dout.PrevPosH = mul(prevPosW, prevViewProj);
+    //dout.PrevPosH /= dout.PrevPosH.w;
     // Возвращаем структуру для Пиксельного Шейдера
     return dout;
 }
@@ -260,36 +277,49 @@ float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, floa
 
     return bumpedNormalW;
 }
-
-float4 PS(DS_OUTPUT pin) : SV_Target
+float2 CalcVelocity(float4 newPos, float4 oldPos)
 {
-    float4 diffuseAlbedo;
-    float3 normalSample;
-    diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
-    normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb; // Загружаем сэмпл нормали
+    
+    return (newPos - oldPos).xy * float2(0.5f, -0.5f);
+}
+PixelOut PS(DS_OUTPUT pin) : SV_Target
+{
+    PixelOut pout;
+    
+    // === ОСНОВНОЙ ЦВЕТ (как в вашем шейдере) ===
+    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
  
-    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW); // Вычисляем смещенную нормаль
+    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW);
+    bumpedNormalW = normalize(bumpedNormalW);
 
-    // Нормаль уже должна быть нормализована в DS, но на всякий случай:
-    bumpedNormalW = normalize(bumpedNormalW); // Используем bumpedNormalW для освещения
-
-    // Вектор к камере
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
 
-    // Расчет освещения (используя bumpedNormalW и pin.PosW)
     float4 ambient = gAmbientLight * diffuseAlbedo;
 
     const float shininess = 1.0f - gRoughness;
-    Material mat = { diffuseAlbedo, gFresnelR0, shininess }; // Передаем обновленный diffuseAlbedo
+    Material mat = { diffuseAlbedo, gFresnelR0, shininess };
 
-    // Вычисляем прямое освещение для всех источников света
-    float3 directLight = ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.f); // Передаем bumpedNormalW
+    float3 directLight = ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.f);
     float4 litColor = ambient + float4(directLight, 0.0f);
 
-    // Добавляем туман, если нужно (fog logic...)
-
-    // Альфа-коррекция и т.д.
-    litColor.a = diffuseAlbedo.a; // Сохраняем альфу из текстуры
-
-    return litColor;
+    litColor.a = diffuseAlbedo.a;
+    
+    pout.Color = litColor;
+    
+    // === VELOCITY (для TAA) ===
+    float2 posNDC = pin.CurPosH.xy / pin.CurPosH.w;
+    float2 prevPosNDC = pin.PrevPosH.xy / pin.PrevPosH.w;
+    
+    float2 uv = posNDC * 0.5f + 0.5f;
+    uv.y = 1.0f - uv.y;
+    
+    float2 prevUV = prevPosNDC * 0.5f + 0.5f;
+    prevUV.y = 1.0f - prevUV.y;
+    
+    //pout.Velocity = float4(0, 0, 0, 0);
+    //pout.Velocity = float4(CalcVelocity(pin.CurPosH, pin.PrevPosH), 0, 0);
+    pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
+    
+    return pout;
 }

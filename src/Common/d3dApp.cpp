@@ -111,6 +111,8 @@ int D3DApp::Run()
 
 bool D3DApp::Initialize()
 {
+
+
 	if(!InitMainWindow())
 		return false;
 
@@ -126,7 +128,13 @@ bool D3DApp::Initialize()
 void D3DApp::CreateRtvAndDsvDescriptorHeaps()
 {
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc;
-    rtvHeapDesc.NumDescriptors = SwapChainBufferCount+3;//SUDA SMOTRI (color, history, velocity)
+	UINT numTaaRTVs = 4;
+    rtvHeapDesc.NumDescriptors = SwapChainBufferCount+numTaaRTVs;//SUDA SMOTRI (color, prev, current, velocity)
+
+	char msg[256];
+	sprintf_s(msg, "Num RTV descriptors = %d\n", rtvHeapDesc.NumDescriptors);
+	OutputDebugStringA(msg);
+	
     rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	rtvHeapDesc.NodeMask = 0;

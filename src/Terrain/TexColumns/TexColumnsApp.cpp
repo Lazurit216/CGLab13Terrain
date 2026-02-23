@@ -248,14 +248,16 @@ private:
 
 	void InitTAAResources();
 	//void BuildTAATextures();
-	void CreateTAAHistoryTexture();
+	//void CreateTAAHistoryTexture();
 	void CreateTAAColorBuffer();
+	void CreateTAAPrevTexture();
+	void CreateTAACurrentTexture();
 	void CreateVelocityBuffer();
 	void CreateTAADescriptors();
 	void BuildTAARootSignature();
 	void BuildFullscreenQuadGeometry();
 	void GenerateTransformedHaltonSequence(float viewSizeX, float viewSizeY, XMFLOAT2* outJitters);
-	void UpdateHistoryTexture(ID3D12GraphicsCommandList* cmdList);
+	//void UpdateHistoryTexture(ID3D12GraphicsCommandList* cmdList);
 
 	std::array<const CD3DX12_STATIC_SAMPLER_DESC, 6> GetStaticSamplers();
 
@@ -281,18 +283,23 @@ private:
 	XMFLOAT2 jitters[16];
 	int frameIndex = 0;
 	//TODO
-	std::unique_ptr<TAATexture> mTAAHistoryTexture;
+	std::unique_ptr<TAATexture> mTAAPrevTexture;
+	std::unique_ptr<TAATexture> mTAACurrentTexture;
 	std::unique_ptr<TAATexture> mTAAColorBuffer;
 	std::unique_ptr<TAATexture> mTAVelocityBuffer;
 	bool useTaa = true;
 
-	UINT mTaaColorBufferRTVIndex;  // RTV для рендера
-	UINT mTaaColorBufferSRVIndex;  // SRV для TAA паса
-	UINT mHistoryTextureSRVIndex;  // SRV для чтения истории
-	UINT mHistoryTextureUAVIndex;  // UAV для копирования
-	UINT mVelocityBufferRTVIndex;
-	UINT mVelocityBufferSRVIndex;  // SRV для скорости
+	UINT mTaaColorBufferRTVIndex;  // для рендера
+	UINT mTaaColorBufferSRVIndex;  // для чтения в TAA
 
+	UINT mPrevTextureSRVIndex;     // для чтения в TAA
+	UINT mPrevTextureRTVIndex;     // для записи новой истории
+
+	UINT mCurrentTextureSRVIndex;  // для чтения в TAA
+	UINT mCurrentTextureRTVIndex;  // для записи новой истории
+
+	UINT mVelocityBufferSRVIndex;  // для чтения в TAA
+	UINT mVelocityBufferRTVIndex;  // для рендера velocity
 
 	// Compute Shader PSO
 	//Microsoft::WRL::ComPtr<ID3D12PipelineState> mBrushComputePSO;
@@ -472,6 +479,8 @@ bool TexColumnsApp::Initialize()
 
 	mCamera.SetPosition(200.0f, 150.0f, 200.0f);
 	mCamera.RotateY(4.0);
+	
+	//BuildDebugGeometry();
 
 	LoadTextures();
 	//CreateBrushTexture();
@@ -482,25 +491,28 @@ bool TexColumnsApp::Initialize()
 	BuildTerrainRootSignature();
 	BuildCsRootSignature();
 
+
+
 	BuildDescriptorHeaps();
+	BuildMaterials();
 
 	//BuildDebugRootSignature();
 
 
 
+	BuildShadersAndInputLayout();
 	InitTAAResources();
 	InitTerrain();
 
-	BuildShadersAndInputLayout();
 	BuildShapeGeometry();
-	//BuildDebugGeometry();
-
 	BuildTerrainGeometry();
 
-	BuildMaterials();
-	BuildPSOs();
+
+
 	BuildRenderItems();
 	BuildFrameResources();
+	BuildPSOs();
+
 
 	//BuildOctreeTree();
 
@@ -515,17 +527,19 @@ bool TexColumnsApp::Initialize()
 	FlushCommandQueue();
 	mTAACB.blendFactor = 0.01f;
 
+
 	GenerateTransformedHaltonSequence(mClientWidth, mClientHeight, jitters);
 
 	return true;
 }
 void TexColumnsApp::InitTAAResources()
 {
-
 	BuildTAARootSignature();
+
 	// Создаем текстуры
 	if (!mTAAColorBuffer) CreateTAAColorBuffer();
-	if (!mTAAHistoryTexture) CreateTAAHistoryTexture();
+	if (!mTAAPrevTexture) CreateTAAPrevTexture();
+	if (!mTAACurrentTexture) CreateTAACurrentTexture();
 	if (!mTAVelocityBuffer) CreateVelocityBuffer();
 	// Создаем дескрипторы
 	CreateTAADescriptors();
@@ -572,22 +586,26 @@ void TexColumnsApp::InitImGui()
 void TexColumnsApp::OnResize()
 {
 	D3DApp::OnResize();
-	
-	BuildDescriptorHeaps();
-	// TODO: Update buffers
-	// Обновляем размеры TAA текстур
-	if (mTAAColorBuffer) mTAAColorBuffer->Resize(mClientWidth, mClientHeight);
-	else CreateTAAColorBuffer();
+	if (mTextures.size() > 0) {
+		BuildDescriptorHeaps();
+		// TODO: Update buffers
+		// Обновляем размеры TAA текстур
+		if (mTAAColorBuffer) mTAAColorBuffer->Resize(mClientWidth, mClientHeight);
+		else CreateTAAColorBuffer();
 
 
-	if (mTAAHistoryTexture) mTAAHistoryTexture->Resize(mClientWidth, mClientHeight);
-	else CreateTAAHistoryTexture();
+		if (mTAAPrevTexture) mTAAPrevTexture->Resize(mClientWidth, mClientHeight);
+		else CreateTAAPrevTexture();
 
-	if (mTAVelocityBuffer) mTAVelocityBuffer->Resize(mClientWidth, mClientHeight);
-	else CreateVelocityBuffer();
+		if (mTAACurrentTexture) mTAACurrentTexture->Resize(mClientWidth, mClientHeight);
+		else CreateTAACurrentTexture();
 
-	//mVelocityTexture->mFormat = DXGI_FORMAT_R16G16_FLOAT;
-	CreateTAADescriptors();
+		if (mTAVelocityBuffer) mTAVelocityBuffer->Resize(mClientWidth, mClientHeight);
+		else CreateVelocityBuffer();
+
+		//mVelocityTexture->mFormat = DXGI_FORMAT_R16G16_FLOAT;
+		CreateTAADescriptors();
+	}
 
 	mCamera.SetLens(0.25f * MathHelper::Pi, AspectRatio(), 1.0f, mCamera.cameraFarZ);
 
@@ -617,7 +635,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 		CloseHandle(eventHandle);
 	}
 
-	SetupImGui();
+
 
 	AnimateMaterials(gt);
 
@@ -634,6 +652,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateTAA(gt);
 	//UpdateCamera(gt);
 	//UpdateVisibleItems();
+	SetupImGui();
 }
 
 void TexColumnsApp::SetupImGui()
@@ -907,48 +926,54 @@ void TexColumnsApp::UpdateObjectCBs(const GameTimer& gt)
 	auto currObjectCB = mCurrFrameResource->ObjectCB.get();
 	for (auto& e : mAllRitems)
 	{
-		if (e->Name == "Guard")
-		{
-			// Загружаем текущую матрицу
-			XMMATRIX currentWorld = XMLoadFloat4x4(&e->World);
 
-			// Извлекаем компоненты (поворот/масштаб/позиция)
-			XMVECTOR scale, rotation, translation;
-			XMMatrixDecompose(&scale, &rotation, &translation, currentWorld);
-
-			// Сохраняем начальную позицию при первом запуске
-			static XMFLOAT3 initialPosition;
-			static bool firstTime = true;
-
-			if (firstTime)
-			{
-				XMStoreFloat3(&initialPosition, translation);
-				firstTime = false;
-			}
-
-			// Синусоидальное движение относительно начальной позиции
-			float verticalOffset = sin(gt.TotalTime() * 4.0f) * 20.0f;
-
-			// Новая позиция:
-			float newX = initialPosition.x;
-			float newY = initialPosition.y + verticalOffset;
-			float newZ = initialPosition.z;
-
-			// Создаем новую матрицу с сохранением масштаба и поворота
-			XMMATRIX newWorld = XMMatrixAffineTransformation(
-				scale,                          // масштаб
-				XMVectorZero(),                 // центр вращения
-				rotation,                        // поворот
-				XMVectorSet(newX, newY, newZ, 1.0f) // новая позиция
-			);
-
-			XMStoreFloat4x4(&e->World, newWorld);
-			e->NumFramesDirty = gNumFrameResources;
-		}
+		
 		// Only update the cbuffer data if the constants have changed.  
 		// This needs to be tracked per frame resource.
 		if (e->NumFramesDirty > 0)
 		{
+			e->PrevWorld = e->World;
+
+			if (e->Name == "maxwell")
+			{
+				// Загружаем текущую матрицу
+				XMMATRIX currentWorld = XMLoadFloat4x4(&e->World);
+
+				// Извлекаем компоненты (поворот/масштаб/позиция)
+				XMVECTOR scale, rotation, translation;
+				XMMatrixDecompose(&scale, &rotation, &translation, currentWorld);
+
+				// Сохраняем начальную позицию при первом запуске
+				static XMFLOAT3 initialPosition;
+				static bool firstTime = true;
+
+				if (firstTime)
+				{
+					XMStoreFloat3(&initialPosition, translation);
+					firstTime = false;
+				}
+
+				// Синусоидальное движение относительно начальной позиции
+				float verticalOffset = sin(gt.TotalTime() * 1.0f) * 20.0f;
+
+				// Новая позиция:
+				float newX = initialPosition.x;
+				float newY = initialPosition.y + verticalOffset;
+				float newZ = initialPosition.z;
+
+				e->PrevWorld = e->World;
+
+				// Создаем новую матрицу с сохранением масштаба и поворота
+				XMMATRIX newWorld = XMMatrixAffineTransformation(
+					scale,                          // масштаб
+					XMVectorZero(),                 // центр вращения
+					rotation,                        // поворот
+					XMVectorSet(newX, newY, newZ, 1.0f) // новая позиция
+				);
+				XMStoreFloat4x4(&e->World, newWorld);
+				e->NumFramesDirty = gNumFrameResources;
+			}
+
 			XMMATRIX world = XMLoadFloat4x4(&e->World);
 			XMMATRIX prevworld = XMLoadFloat4x4(&e->PrevWorld);
 			XMMATRIX texTransform = XMLoadFloat4x4(&e->TexTransform);
@@ -999,6 +1024,9 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 
 	XMMATRIX view = mCamera.GetView();
 	XMMATRIX proj = mCamera.GetProj();
+	//static XMMATRIX lastViewProj = XMMatrixIdentity();
+
+	//XMStoreFloat4x4(&mMainPassCB.PrevViewProj , XMMatrixTranspose(lastViewProj));
 
 	//TODO:
 	XMMATRIX proj_jittered = proj;
@@ -1014,11 +1042,15 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
     mInvViewProj = XMMatrixInverse(&XMMatrixDeterminant(viewProj), viewProj);
 
 	XMMATRIX viewProj_jittered = XMMatrixMultiply(view, proj_jittered);
+	//lastViewProj = viewProj_jittered;
 
 	XMStoreFloat4x4(&mMainPassCB.View, XMMatrixTranspose(view));
 	XMStoreFloat4x4(&mMainPassCB.InvView, XMMatrixTranspose(invView));
 	XMStoreFloat4x4(&mMainPassCB.Proj, XMMatrixTranspose(proj));
 	XMStoreFloat4x4(&mMainPassCB.InvProj, XMMatrixTranspose(invProj));
+
+	mMainPassCB.PrevViewProj =mMainPassCB.ViewProj;
+
 	XMStoreFloat4x4(&mMainPassCB.ViewProj, XMMatrixTranspose(viewProj));
 	XMStoreFloat4x4(&mMainPassCB.InvViewProj, XMMatrixTranspose(mInvViewProj));
 
@@ -1209,6 +1241,9 @@ void TexColumnsApp::LoadDDSTexturesFromFolder(const std::wstring& folderPath)
 
 void TexColumnsApp::LoadTextures()
 {
+	char msg[256];
+	sprintf_s(msg, "Loading textures...\n");
+	OutputDebugStringA(msg);
 	//LoadDDSTexture("disp_placeholder", L"../../Textures/terrain_disp.dds");
 
 	LoadDDSTexture("stoneTex", L"../../Textures/stone.dds");
@@ -1443,22 +1478,33 @@ void TexColumnsApp::BuildCsRootSignature()
 // TODO
 void TexColumnsApp::BuildTAARootSignature()
 {
-	CD3DX12_DESCRIPTOR_RANGE srvTable[3];
-	srvTable[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0 - Current frame
-	srvTable[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t1 - History
-	srvTable[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t2 - Velocity
+	// Отдельные диапазоны для каждой текстуры
+	CD3DX12_DESCRIPTOR_RANGE colorRange;
+	colorRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0); // t0 - Current frame
 
-	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
+	CD3DX12_DESCRIPTOR_RANGE historyRange;
+	historyRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 1); // t1 - History
 
-	// Параметр 0: Таблица с тремя SRV
-	slotRootParameter[0].InitAsDescriptorTable(3, srvTable);
+	CD3DX12_DESCRIPTOR_RANGE velocityRange;
+	velocityRange.Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 2); // t2 - Velocity
 
-	// Параметр 1: CBV с параметрами TAA (b0)
-	slotRootParameter[1].InitAsConstantBufferView(0);
+	// 4 параметра: 3 таблицы + 1 CBV
+	CD3DX12_ROOT_PARAMETER slotRootParameter[4];
+
+	// Параметр 0: Таблица с Color
+	slotRootParameter[0].InitAsDescriptorTable(1, &colorRange);
+
+	// Параметр 1: Таблица с History  
+	slotRootParameter[1].InitAsDescriptorTable(1, &historyRange);
+
+	// Параметр 2: Таблица с Velocity
+	slotRootParameter[2].InitAsDescriptorTable(1, &velocityRange);
+
+	// Параметр 3: CBV с параметрами TAA (b0)
+	slotRootParameter[3].InitAsConstantBufferView(0);
 
 	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(
-		2,                                
-		slotRootParameter,
+		4, slotRootParameter,
 		(UINT)GetStaticSamplers().size(),
 		GetStaticSamplers().data(),
 		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
@@ -1553,7 +1599,14 @@ void TexColumnsApp::BuildDescriptorHeaps()
 
 	// Создаем текстуру кисти после всех обычных текстур
 	OutputDebugStringA("\nCreating brush texture descriptors:\n");
+
+	sprintf_s(msg, "%d", offset);
+	OutputDebugStringA(msg);
+
 	CreateBrushTexture(hDescriptor, offset);
+
+	sprintf_s(msg, "%d", offset);
+	OutputDebugStringA(msg);
 
 	// === ВЫВОД ИНФОРМАЦИИ О СОЗДАННОЙ КУЧЕ ===
 	OutputDebugStringA("\n=== DESCRIPTOR HEAP SUMMARY ===\n");
@@ -1624,62 +1677,66 @@ void TexColumnsApp::BuildDescriptorHeaps()
 
 void TexColumnsApp::CreateTAADescriptors()
 {
-	//TODO recalculate indexes in right order!!
 	char msg[256];
-	sprintf_s(msg, "\n=== Initializing TAA Resources ===\n");
+	sprintf_s(msg, "\n=== Creating TAA Descriptors ===\n");
 	OutputDebugStringA(msg);
 
 	// Получаем текущее количество дескрипторов для вычисления индексов
-	UINT currentSRVCount = (UINT)mTextures.size() + 2; // обычные текстуры + SRV кисти + UAV кисти
+	UINT currentSRVCount = (UINT)mTextures.size()-1 + 2; // обычные текстуры + SRV кисти + UAV кисти - brushCanvas (1 текстура, 2 индекса)
 
-	// Выделяем индексы в SRV/UAV хипе (идут после brushCanvas)
+	// Выделяем индексы в SRV хипе
 	mTaaColorBufferSRVIndex = currentSRVCount;
-	mHistoryTextureSRVIndex = mTaaColorBufferSRVIndex + 1;
-	mHistoryTextureUAVIndex = mHistoryTextureSRVIndex + 1;
-	mVelocityBufferSRVIndex = mHistoryTextureUAVIndex + 1;
+	mPrevTextureSRVIndex = mTaaColorBufferSRVIndex + 1;
+	mCurrentTextureSRVIndex = mPrevTextureSRVIndex + 1;
+	mVelocityBufferSRVIndex = mCurrentTextureSRVIndex + 1;
 
 	sprintf_s(msg, "  SRV Indices:\n");
 	OutputDebugStringA(msg);
 	sprintf_s(msg, "    Color Buffer SRV: %d\n", mTaaColorBufferSRVIndex);
 	OutputDebugStringA(msg);
-	sprintf_s(msg, "    History SRV: %d\n", mHistoryTextureSRVIndex);
+	sprintf_s(msg, "    Prev Texture SRV: %d\n", mPrevTextureSRVIndex);
 	OutputDebugStringA(msg);
-	sprintf_s(msg, "    History UAV: %d\n", mHistoryTextureUAVIndex);
+	sprintf_s(msg, "    Current Texture SRV: %d\n", mCurrentTextureSRVIndex);
 	OutputDebugStringA(msg);
 	sprintf_s(msg, "    Velocity SRV: %d\n", mVelocityBufferSRVIndex);
 	OutputDebugStringA(msg);
 
-	// Используем этот индекс для первой TAA текстуры
-	mTaaColorBufferRTVIndex = SwapChainBufferCount+1;
-	mVelocityBufferRTVIndex = mTaaColorBufferRTVIndex + 1;
+	// Выделяем индексы в RTV хипе
+	mTaaColorBufferRTVIndex = SwapChainBufferCount;      // после back buffers
+	mPrevTextureRTVIndex = mTaaColorBufferRTVIndex + 1;
+	mCurrentTextureRTVIndex = mPrevTextureRTVIndex + 1;
+	mVelocityBufferRTVIndex = mCurrentTextureRTVIndex + 1;
 
 	sprintf_s(msg, "  RTV Indices:\n");
 	OutputDebugStringA(msg);
 	sprintf_s(msg, "    Color Buffer RTV: %d\n", mTaaColorBufferRTVIndex);
 	OutputDebugStringA(msg);
+	sprintf_s(msg, "    Prev Texture RTV: %d\n", mPrevTextureRTVIndex);
+	OutputDebugStringA(msg);
+	sprintf_s(msg, "    Current Texture RTV: %d\n", mCurrentTextureRTVIndex);
+	OutputDebugStringA(msg);
 	sprintf_s(msg, "    Velocity RTV: %d\n", mVelocityBufferRTVIndex);
 	OutputDebugStringA(msg);
-	
-	// 1. RTV для TAA Color Buffer
+
+	// ============ 1. Color Buffer (mTAAColorBuffer) ============
+	// RTV для Color Buffer
 	D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 	rtvDesc.Format = mBackBufferFormat;
 	rtvDesc.Texture2D.MipSlice = 0;
 	rtvDesc.Texture2D.PlaneSlice = 0;
 
-
 	CD3DX12_CPU_DESCRIPTOR_HANDLE rtvHandle(
 		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
 		mTaaColorBufferRTVIndex,
-		mRtvDescriptorSize);;
+		mRtvDescriptorSize);
 	md3dDevice->CreateRenderTargetView(
 		mTAAColorBuffer->GetResource(),
 		&rtvDesc,
 		rtvHandle);
-
 	mTAAColorBuffer->SetRTVHandle(rtvHandle);
-	
-	// 2. SRV для TAA Color Buffer
+
+	// SRV для Color Buffer
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1691,48 +1748,60 @@ void TexColumnsApp::CreateTAADescriptors()
 		mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
 		mTaaColorBufferSRVIndex,
 		mCbvSrvDescriptorSize);
-
 	md3dDevice->CreateShaderResourceView(
 		mTAAColorBuffer->GetResource(),
 		&srvDesc,
 		srvHandle);
-
 	mTAAColorBuffer->SetSRVHandle(srvHandle);
 
-	// 3. SRV для History
-	CD3DX12_CPU_DESCRIPTOR_HANDLE historySrvHandle(
-		mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		mHistoryTextureSRVIndex,
-		mCbvSrvDescriptorSize);
+	// ============ 2. Prev Texture (mTAAPrevTexture) ============
+	// RTV для Prev Texture
+	CD3DX12_CPU_DESCRIPTOR_HANDLE prevRtvHandle(
+		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+		mPrevTextureRTVIndex,
+		mRtvDescriptorSize);
+	md3dDevice->CreateRenderTargetView(
+		mTAAPrevTexture->GetResource(),
+		&rtvDesc,
+		prevRtvHandle);
+	mTAAPrevTexture->SetRTVHandle(prevRtvHandle);
 
+	// SRV для Prev Texture
+	CD3DX12_CPU_DESCRIPTOR_HANDLE prevSrvHandle(
+		mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
+		mPrevTextureSRVIndex,
+		mCbvSrvDescriptorSize);
 	md3dDevice->CreateShaderResourceView(
-		mTAAHistoryTexture->GetResource(),
+		mTAAPrevTexture->GetResource(),
 		&srvDesc,
-		historySrvHandle);
+		prevSrvHandle);
+	mTAAPrevTexture->SetSRVHandle(prevSrvHandle);
 
-	mTAAHistoryTexture->SetSRVHandle(historySrvHandle);
+	// ============ 3. Current Texture (mTAACurrentTexture) ============
+	// RTV для Current Texture
+	CD3DX12_CPU_DESCRIPTOR_HANDLE currentRtvHandle(
+		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+		mCurrentTextureRTVIndex,
+		mRtvDescriptorSize);
+	md3dDevice->CreateRenderTargetView(
+		mTAACurrentTexture->GetResource(),
+		&rtvDesc,
+		currentRtvHandle);
+	mTAACurrentTexture->SetRTVHandle(currentRtvHandle);
 
-	// 4. UAV для History (для копирования)
-	D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-	uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-	uavDesc.Format = mBackBufferFormat;
-	uavDesc.Texture2D.MipSlice = 0;
-	uavDesc.Texture2D.PlaneSlice = 0;
-
-	CD3DX12_CPU_DESCRIPTOR_HANDLE uavHandle(
+	// SRV для Current Texture
+	CD3DX12_CPU_DESCRIPTOR_HANDLE currentSrvHandle(
 		mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
-		mHistoryTextureUAVIndex,
+		mCurrentTextureSRVIndex,
 		mCbvSrvDescriptorSize);
+	md3dDevice->CreateShaderResourceView(
+		mTAACurrentTexture->GetResource(),
+		&srvDesc,
+		currentSrvHandle);
+	mTAACurrentTexture->SetSRVHandle(currentSrvHandle);
 
-	md3dDevice->CreateUnorderedAccessView(
-		mTAAHistoryTexture->GetResource(),
-		nullptr,
-		&uavDesc,
-		uavHandle);
-
-	mTAAHistoryTexture->SetUAVHandle(uavHandle);
-
-	// 5. RTV для Velocity
+	// ============ 4. Velocity Buffer (mTAVelocityBuffer) ============
+	// RTV для Velocity
 	D3D12_RENDER_TARGET_VIEW_DESC velRtvDesc = {};
 	velRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
 	velRtvDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
@@ -1742,15 +1811,13 @@ void TexColumnsApp::CreateTAADescriptors()
 		mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
 		mVelocityBufferRTVIndex,
 		mRtvDescriptorSize);
-
 	md3dDevice->CreateRenderTargetView(
 		mTAVelocityBuffer->GetResource(),
 		&velRtvDesc,
 		velRtvHandle);
-
 	mTAVelocityBuffer->SetRTVHandle(velRtvHandle);
 
-	// 6. SRV для Velocity
+	// SRV для Velocity
 	D3D12_SHADER_RESOURCE_VIEW_DESC velSrvDesc = {};
 	velSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	velSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
@@ -1762,59 +1829,20 @@ void TexColumnsApp::CreateTAADescriptors()
 		mSrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart(),
 		mVelocityBufferSRVIndex,
 		mCbvSrvDescriptorSize);
-
 	md3dDevice->CreateShaderResourceView(
 		mTAVelocityBuffer->GetResource(),
 		&velSrvDesc,
 		velSrvHandle);
-
 	mTAVelocityBuffer->SetSRVHandle(velSrvHandle);
-	sprintf_s(msg, "TAA Descriptors created sucessfuly\n");
+
+	// Дополнительно проверьте формат текстуры
+	D3D12_RESOURCE_DESC desc = mTAVelocityBuffer->GetResource()->GetDesc();
+	sprintf_s(msg, "Velocity Texture - Format: %d, Width: %d, Height: %d\n",
+		desc.Format, desc.Width, desc.Height);
 	OutputDebugStringA(msg);
-}
 
-//void TexColumnsApp::BuildTAATextures()
-//{
-//	// Пересоздаем дескрипторы после ресайза
-//	//BuildDescriptorHeaps();
-//	//CreateTAADescriptors();
-//}
-
-void TexColumnsApp::CreateTAAColorBuffer()
-{
-
-	mTAAColorBuffer = std::make_unique<TAATexture>(
-		md3dDevice.Get(),
-		mBackBufferFormat,           // Тот же формат что и back buffer
-		mClientWidth,
-		mClientHeight,
-		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
-	);
-	OutputDebugStringA("Color texture created\n");
-}
-
-void TexColumnsApp::CreateTAAHistoryTexture()
-{
-	mTAAHistoryTexture = std::make_unique<TAATexture>(
-		md3dDevice.Get(),
-		mBackBufferFormat,
-		mClientWidth,
-		mClientHeight,
-		D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS  // Нужен UAV для копирования
-	);
-	OutputDebugStringA("History texture created\n");
-}
-
-void TexColumnsApp::CreateVelocityBuffer()
-{
-	mTAVelocityBuffer = std::make_unique<TAATexture>(
-		md3dDevice.Get(),
-		DXGI_FORMAT_R16G16_FLOAT,    // 16-bit достаточно для velocity
-		mClientWidth,
-		mClientHeight,
-		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
-	);
-	OutputDebugStringA("Velocity texture created\n");
+	sprintf_s(msg, "TAA Descriptors created successfully\n");
+	OutputDebugStringA(msg);
 }
 
 void TexColumnsApp::CreateBrushTexture(CD3DX12_CPU_DESCRIPTOR_HANDLE baseDescriptorHandle, int baseOffset)
@@ -1883,6 +1911,63 @@ void TexColumnsApp::CreateBrushTexture(CD3DX12_CPU_DESCRIPTOR_HANDLE baseDescrip
 	// 6. Инициализируем текстуру черным цветом
 	//InitializeBrushTexture();
 }
+//void TexColumnsApp::BuildTAATextures()
+//{
+//	// Пересоздаем дескрипторы после ресайза
+//	//BuildDescriptorHeaps();
+//	//CreateTAADescriptors();
+//}
+
+void TexColumnsApp::CreateTAAColorBuffer()
+{
+
+	mTAAColorBuffer = std::make_unique<TAATexture>(
+		md3dDevice.Get(),
+		mBackBufferFormat,           // Тот же формат что и back buffer
+		mClientWidth,
+		mClientHeight,
+		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
+	);
+	OutputDebugStringA("Color texture created\n");
+}
+
+void TexColumnsApp::CreateTAAPrevTexture()
+{
+	mTAAPrevTexture = std::make_unique<TAATexture>(
+		md3dDevice.Get(),
+		mBackBufferFormat,
+		mClientWidth,
+		mClientHeight,
+		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET  // RTV для записи истории
+	);
+	OutputDebugStringA("Prev history texture created\n");
+}
+
+void TexColumnsApp::CreateTAACurrentTexture()
+{
+	mTAACurrentTexture = std::make_unique<TAATexture>(
+		md3dDevice.Get(),
+		mBackBufferFormat,
+		mClientWidth,
+		mClientHeight,
+		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET  // RTV для записи истории
+	);
+	OutputDebugStringA("Current history texture created\n");
+}
+
+void TexColumnsApp::CreateVelocityBuffer()
+{
+	mTAVelocityBuffer = std::make_unique<TAATexture>(
+		md3dDevice.Get(),
+		DXGI_FORMAT_R16G16_FLOAT,    // 16-bit достаточно для velocity
+		mClientWidth,
+		mClientHeight,
+		D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET
+	);
+	OutputDebugStringA("Velocity texture created\n");
+
+}
+
 
 
 void TexColumnsApp::BuildShadersAndInputLayout()
@@ -1964,8 +2049,9 @@ void TexColumnsApp::BuildPSOs()
 	opaquePsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	opaquePsoDesc.SampleMask = UINT_MAX;
 	opaquePsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
-	opaquePsoDesc.NumRenderTargets = 1;
+	opaquePsoDesc.NumRenderTargets = 2;
 	opaquePsoDesc.RTVFormats[0] = mBackBufferFormat;
+	opaquePsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16_FLOAT;    // Velocity
 	opaquePsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	opaquePsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	opaquePsoDesc.DSVFormat = mDepthStencilFormat;
@@ -2014,8 +2100,9 @@ void TexColumnsApp::BuildPSOs()
 	standardPsoDesc.SampleMask = UINT_MAX;
 	standardPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 
-	standardPsoDesc.NumRenderTargets = 1;
+	standardPsoDesc.NumRenderTargets = 2;
 	standardPsoDesc.RTVFormats[0] = mBackBufferFormat;
+	standardPsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16_FLOAT;
 	standardPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	standardPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	standardPsoDesc.DSVFormat = mDepthStencilFormat;
@@ -2078,8 +2165,11 @@ void TexColumnsApp::BuildPSOs()
 	terrainPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
 	terrainPsoDesc.SampleMask = UINT_MAX;
 	terrainPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-	terrainPsoDesc.NumRenderTargets = 1;
+
+	terrainPsoDesc.NumRenderTargets = 2;
 	terrainPsoDesc.RTVFormats[0] = mBackBufferFormat;
+	terrainPsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16_FLOAT;
+
 	terrainPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
 	terrainPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
 	terrainPsoDesc.DSVFormat = mDepthStencilFormat;
@@ -2100,30 +2190,27 @@ void TexColumnsApp::BuildPSOs()
 	// TODO:
 
 	//PSO for TAA
-	D3D12_GRAPHICS_PIPELINE_STATE_DESC taaPsoDesc = standardPsoDesc;
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC taaPsoDesc;
+
+	ZeroMemory(&taaPsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+	taaPsoDesc.InputLayout = { nullptr, 0 };
+
 	taaPsoDesc.pRootSignature = mTAARootSignature.Get();
-
+	taaPsoDesc.VS = { mShaders["TaaVS"]->GetBufferPointer(), mShaders["TaaVS"]->GetBufferSize() };
+	taaPsoDesc.PS = { mShaders["TaaPS"]->GetBufferPointer(), mShaders["TaaPS"]->GetBufferSize() };
+	taaPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	taaPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
 	taaPsoDesc.DepthStencilState.DepthEnable = false;
-	taaPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
-
-	taaPsoDesc.NumRenderTargets = 1; 
-	taaPsoDesc.RTVFormats[0] = mBackBufferFormat;
-	taaPsoDesc.RTVFormats[1] = DXGI_FORMAT_UNKNOWN;
-	taaPsoDesc.RTVFormats[2] = DXGI_FORMAT_UNKNOWN;
-
-	taaPsoDesc.VS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["TaaVS"]->GetBufferPointer()),
-		mShaders["TaaVS"]->GetBufferSize()
-	};
-	taaPsoDesc.PS =
-	{
-		reinterpret_cast<BYTE*>(mShaders["TaaPS"]->GetBufferPointer()),
-		mShaders["TaaPS"]->GetBufferSize()
-	};
-
-	taaPsoDesc.BlendState.RenderTarget[0].BlendEnable = false;
-	taaPsoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	taaPsoDesc.DepthStencilState.StencilEnable = false;
+	taaPsoDesc.SampleMask = UINT_MAX;
+	taaPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	taaPsoDesc.NumRenderTargets = 2;
+	taaPsoDesc.RTVFormats[0] = mBackBufferFormat;   // BackBuffer (SV_Target0)
+	taaPsoDesc.RTVFormats[1] = mBackBufferFormat;   // History    (SV_Target1)
+	taaPsoDesc.RTVFormats[2] = DXGI_FORMAT_UNKNOWN; // no third target
+	taaPsoDesc.SampleDesc.Count = 1;
+	taaPsoDesc.SampleDesc.Quality = 0;
+	taaPsoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
 
 	ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(
 		&taaPsoDesc,
@@ -2957,8 +3044,8 @@ void TexColumnsApp::BuildRenderItems()
 		mAllRitems.push_back(std::move(renderItem));
 	}
 
-	RenderCustomMesh("Guard", "Guard", "", XMMatrixScaling(5, 5, 5), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(100, 160, 100));
-	RenderCustomMesh("maxwell", "maxwell", "", XMMatrixScaling(1., 1., 1.), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(20, 30, 30));
+	RenderCustomMesh("Guard", "Guard", "", XMMatrixScaling(2, 2, 2), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(100, 160, 100));
+	RenderCustomMesh("maxwell", "maxwell", "", XMMatrixScaling(1., 1., 1.), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(20, 50, 30));
 }
 
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
@@ -3180,246 +3267,263 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 
 	char debugMsg[256];
 
-
 	try
 	{
 		auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
 		HRESULT hr = cmdListAlloc->Reset();
 		if (FAILED(hr)) ThrowIfFailed(hr);
 
-		// Устанавливаем PSO в зависимости от режима
 		if (isFillModeSolid)
-		{
 			hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["opaque"].Get());
-		}
 		else
-		{
 			hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["wireframe"].Get());
-		}
 		if (FAILED(hr)) ThrowIfFailed(hr);
 
 		mCommandList->RSSetViewports(1, &mScreenViewport);
 		mCommandList->RSSetScissorRects(1, &mScissorRect);
 
-		// Переводим TAA Color Buffer в состояние RENDER_TARGET
-		CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		// ============ STEP 1: SCENE -> COLOR + VELOCITY ============
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 			mTAAColorBuffer->GetResource(),
-			D3D12_RESOURCE_STATE_COMMON,
-			D3D12_RESOURCE_STATE_RENDER_TARGET);
-		mCommandList->ResourceBarrier(1, &barrier);
+			D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET));
 
-		// Устанавливаем TAA Color Buffer как Render Target
-		CD3DX12_CPU_DESCRIPTOR_HANDLE taaRTV(
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mTAVelocityBuffer->GetResource(),
+			D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET));
+
+		CD3DX12_CPU_DESCRIPTOR_HANDLE colorRTV(
 			mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
-			mTaaColorBufferRTVIndex,
-			mRtvDescriptorSize);
+			mTaaColorBufferRTVIndex, mRtvDescriptorSize);
+		CD3DX12_CPU_DESCRIPTOR_HANDLE velocityRTV(
+			mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+			mVelocityBufferRTVIndex, mRtvDescriptorSize);
 		CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(DepthStencilView());
 
-		mCommandList->OMSetRenderTargets(1, &taaRTV, true, &dsv);
-		mCommandList->ClearRenderTargetView(taaRTV, Colors::DarkGoldenrod, 0, nullptr);
-		mCommandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = { colorRTV, velocityRTV };
+		mCommandList->OMSetRenderTargets(2, rtvs, false, &dsv);
+		mCommandList->ClearRenderTargetView(colorRTV, Colors::DarkBlue, 0, nullptr);
+		float clearVel[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		mCommandList->ClearRenderTargetView(velocityRTV, clearVel, 0, nullptr);
+		mCommandList->ClearDepthStencilView(dsv,
+			D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
 
-		// Устанавливаем дескрипторные хипы
 		ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
 		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
-
-		// Основной рендеринг
+		// Opaque items
 		mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
 		auto passCB = mCurrFrameResource->PassCB->Resource();
 		mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
-
 		DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
-		//Рендеринг кастомных мешей
+		// Custom meshes (MeshStandard.hlsl writes real velocity)
 		mCommandList->SetGraphicsRootSignature(mStandMeshRootSignature.Get());
-		mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress()); // b1 в стандартной RS
+		mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 		if (isFillModeSolid)
-		{
 			mCommandList->SetPipelineState(mPSOs["standardMesh"].Get());
-		}
 		else
-		{
 			mCommandList->SetPipelineState(mPSOs["wireStandardMesh"].Get());
-		}
 		if (!mStandCustomMeshes.empty())
-		{
-			sprintf_s(debugMsg, "Rendering %d custom meshes\n",
-				(int)mStandCustomMeshes.size());
-			OutputDebugStringA(debugMsg);
-
 			DrawCustomMeshes(mCommandList.Get(), mStandCustomMeshes);
-		}
 
-		// Рендеринг террейна
+		// Terrain
 		mVisibleTiles.clear();
 		mVisibleTiles = mTerrain->GetVisibleTiles();
-
 		if (!mVisibleTiles.empty())
 		{
-			sprintf_s(debugMsg, "Rendering %d visible tiles\n", (int)mVisibleTiles.size());
-			OutputDebugStringA(debugMsg);
-
 			if (isFillModeSolid)
 				mCommandList->SetPipelineState(mPSOs["terrain"].Get());
 			else
 				mCommandList->SetPipelineState(mPSOs["wireTerrain"].Get());
-
 			mCommandList->SetGraphicsRootSignature(mTerrainRootSignature.Get());
 			mCommandList->SetGraphicsRootConstantBufferView(5, passCB->GetGPUVirtualAddress());
-
 			DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
-
-			// Возвращаемся к основной PSO
-			//mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-			//if (isFillModeSolid)
-			//	mCommandList->SetPipelineState(mPSOs["opaque"].Get());
-			//else
-			//	mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
 		}
-		// ============ TAA RESOLVE PASS ============
-	   // Переводим TAA Color Buffer в состояние SRV для чтения
-		barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-			mTAAColorBuffer->GetResource(),
-			D3D12_RESOURCE_STATE_RENDER_TARGET,
-			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-		mCommandList->ResourceBarrier(1, &barrier);
 
-		// Переводим Back Buffer в состояние RENDER_TARGET
+		// ---- Frame 1 bootstrap: seed both history buffers with first frame ----
+		// After this block, Prev and Current are back in COMMON.
+		if (frameCount == 1)
+		{
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAColorBuffer->GetResource(),
+				D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE));
+
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAPrevTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAACurrentTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST));
+
+			mCommandList->CopyResource(mTAAPrevTexture->GetResource(), mTAAColorBuffer->GetResource());
+			mCommandList->CopyResource(mTAACurrentTexture->GetResource(), mTAAColorBuffer->GetResource());
+
+			// Return EVERYTHING to COMMON so the TAA pass below can start fresh
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAPrevTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAACurrentTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAColorBuffer->GetResource(),
+				D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET));
+		}
+
+		// ============ STEP 2: TAA RESOLVE PASS ============
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mTAAColorBuffer->GetResource(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mTAVelocityBuffer->GetResource(),
+			D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+
 		CD3DX12_RESOURCE_BARRIER backBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
 			CurrentBackBuffer(),
-			D3D12_RESOURCE_STATE_PRESENT,
-			D3D12_RESOURCE_STATE_RENDER_TARGET);
+			D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
 		mCommandList->ResourceBarrier(1, &backBufferBarrier);
 
-		// Устанавливаем Back Buffer как Render Target
-		mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), true, nullptr);
-		mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
-
-		// Устанавливаем TAA PSO и Root Signature
 		mCommandList->SetPipelineState(mPSOs["TAA"].Get());
 		mCommandList->SetGraphicsRootSignature(mTAARootSignature.Get());
 
-		// Привязываем SRV таблицу с тремя текстурами
-		CD3DX12_GPU_DESCRIPTOR_HANDLE srvTableHandle(
-			mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
-			mTaaColorBufferSRVIndex,  // Начальный индекс (t0)
-			mCbvSrvDescriptorSize);
-		mCommandList->SetGraphicsRootDescriptorTable(0, srvTableHandle);
+		// Ping-pong. frameIndex has NOT been incremented yet.
+		// Both textures are guaranteed to be in COMMON here (seeded above on frame 1,
+		// returned to COMMON at end-of-frame on every subsequent frame).
+		UINT historySRVIndex;
+		UINT historyRTVIndex;
 
-		// Привязываем TAA Constant Buffer
-		auto taaCB = mCurrFrameResource->TAACB->Resource();  // Нужно создать TAACB в FrameResource
-		mCommandList->SetGraphicsRootConstantBufferView(1, taaCB->GetGPUVirtualAddress());
-
-		// Рисуем Fullscreen Quad
-		auto quadGeo = mFullscreenQuadGeo.get();
-		if (quadGeo)
+		if (frameIndex % 2 == 0)
 		{
-			D3D12_VERTEX_BUFFER_VIEW vbv = quadGeo->VertexBufferView();
-			D3D12_INDEX_BUFFER_VIEW ibv = quadGeo->IndexBufferView();
-
-			mCommandList->IASetVertexBuffers(0, 1, &vbv);
-			mCommandList->IASetIndexBuffer(&ibv);
-			mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-			auto submesh = quadGeo->DrawArgs["quad"];
-			mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1,
-				submesh.StartIndexLocation, submesh.BaseVertexLocation, 0);
+			// Read Prev (SRV), write Current (RTV)
+			historySRVIndex = mPrevTextureSRVIndex;
+			historyRTVIndex = mCurrentTextureRTVIndex;
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAPrevTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAACurrentTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET));
+		}
+		else
+		{
+			// Read Current (SRV), write Prev (RTV)
+			historySRVIndex = mCurrentTextureSRVIndex;
+			historyRTVIndex = mPrevTextureRTVIndex;
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAACurrentTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAPrevTexture->GetResource(),
+				D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_RENDER_TARGET));
 		}
 
+		// Bind TAA inputs
+		mCommandList->SetGraphicsRootDescriptorTable(0, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+			mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+			mTaaColorBufferSRVIndex, mCbvSrvDescriptorSize));
+		mCommandList->SetGraphicsRootDescriptorTable(1, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+			mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+			historySRVIndex, mCbvSrvDescriptorSize));
+		mCommandList->SetGraphicsRootDescriptorTable(2, CD3DX12_GPU_DESCRIPTOR_HANDLE(
+			mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+			mVelocityBufferSRVIndex, mCbvSrvDescriptorSize));
+		mCommandList->SetGraphicsRootConstantBufferView(3,
+			mCurrFrameResource->TAACB->Resource()->GetGPUVirtualAddress());
 
+		// Bind RTVs: backbuffer (Target0) + history write (Target1)
+		rtvs[0] = CurrentBackBufferView();
+		rtvs[1] = CD3DX12_CPU_DESCRIPTOR_HANDLE(
+			mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+			historyRTVIndex, mRtvDescriptorSize);
+		mCommandList->OMSetRenderTargets(2, rtvs, false, nullptr);
+		mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
 
-		// ============ ВЫПОЛНЕНИЕ COMPUTE SHADER ============
-		// ДОЛЖНО БЫТЬ ДО основного рендеринга!
+		// Fullscreen triangle - no vertex buffer, TAA VS uses SV_VertexID
+		mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		mCommandList->DrawInstanced(3, 1, 0, 0);
+
+		// ============ COMPUTE SHADER (brush painting) ============
 		if (mIsPainting)
 		{
-			OutputDebugStringA("=== EXECUTING COMPUTE SHADER ===\n");
-
-			// Устанавливаем Compute PSO и root signature
 			mCommandList->SetPipelineState(mPSOs["brushCompute"].Get());
 			mCommandList->SetComputeRootSignature(mBrushComputeRootSignature.Get());
 
-			// Барьер для перевода текстуры
-			CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 				mBrushTexture.Get(),
 				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-				D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-			mCommandList->ResourceBarrier(1, &barrier);
+				D3D12_RESOURCE_STATE_UNORDERED_ACCESS));
 
-			// Устанавливаем корневые параметры
-			auto brushCB = mCurrFrameResource->BrushCB->Resource();
-			mCommandList->SetComputeRootConstantBufferView(0, brushCB->GetGPUVirtualAddress()); // b0
+			mCommandList->SetComputeRootConstantBufferView(0,
+				mCurrFrameResource->BrushCB->Resource()->GetGPUVirtualAddress());
 
 			if (!mVisibleTiles.empty())
 			{
 				auto tile = mVisibleTiles[0];
-				auto terrCB = mCurrFrameResource->TerrainCB->Resource();
-				UINT terrCBByteSize = d3dUtil::CalcConstantBufferByteSize(sizeof(TileConstants));
-				D3D12_GPU_VIRTUAL_ADDRESS terrainCBAddress = terrCB->GetGPUVirtualAddress() + tile->tileIndex * terrCBByteSize;
-				mCommandList->SetComputeRootConstantBufferView(1, terrainCBAddress); // b1
+				UINT sz = d3dUtil::CalcConstantBufferByteSize(sizeof(TileConstants));
+				mCommandList->SetComputeRootConstantBufferView(1,
+					mCurrFrameResource->TerrainCB->Resource()->GetGPUVirtualAddress()
+					+ tile->tileIndex * sz);
 			}
-
-			// SRV для карты высот (t0) - индекс 2
-			CD3DX12_GPU_DESCRIPTOR_HANDLE srvHandle(
+			mCommandList->SetComputeRootDescriptorTable(2, CD3DX12_GPU_DESCRIPTOR_HANDLE(
 				mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
-				TexOffsets["terrainDisp"],
-				mCbvSrvDescriptorSize);
-			mCommandList->SetComputeRootDescriptorTable(2, srvHandle);
-
-			// UAV для текстуры кисти (u0) - индекс 3
-			CD3DX12_GPU_DESCRIPTOR_HANDLE uavHandle(
+				TexOffsets["terrainDisp"], mCbvSrvDescriptorSize));
+			mCommandList->SetComputeRootDescriptorTable(3, CD3DX12_GPU_DESCRIPTOR_HANDLE(
 				mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
-				mBrushTextureUAVIndex,
-				mCbvSrvDescriptorSize);
-			mCommandList->SetComputeRootDescriptorTable(3, uavHandle);
+				mBrushTextureUAVIndex, mCbvSrvDescriptorSize));
 
-			// Диспатчим Compute Shader
-			UINT threadGroupsX = (UINT)ceil(mBrushTextureWidth / 16.0f);
-			UINT threadGroupsY = (UINT)ceil(mBrushTextureHeight / 16.0f);
+			mCommandList->Dispatch(
+				(UINT)ceil(mBrushTextureWidth / 16.0f),
+				(UINT)ceil(mBrushTextureHeight / 16.0f), 1);
 
-			sprintf_s(debugMsg, "Dispatch: %dx%d thread groups\n", threadGroupsX, threadGroupsY);
-			OutputDebugStringA(debugMsg);
-
-			mCommandList->Dispatch(threadGroupsX, threadGroupsY, 1);
-
-			// Возвращаем текстуру в SRV состояние
-			barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
 				mBrushTexture.Get(),
 				D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-			mCommandList->ResourceBarrier(1, &barrier);
-
-			// Возвращаем графические настройки
-			mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-			if (isFillModeSolid)
-				mCommandList->SetPipelineState(mPSOs["opaque"].Get());
-			else
-				mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
-
-			OutputDebugStringA("Compute shader executed successfully\n");
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 		}
-		// =================================================
 
-
-		// ImGui рендеринг (последний)
+		// ============ IMGUI ============
 		ID3D12DescriptorHeap* imguiHeaps[] = { mImGuiSrvDescriptorHeap.Get() };
 		mCommandList->SetDescriptorHeaps(_countof(imguiHeaps), imguiHeaps);
-
 		ImGui::Render();
 		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
 
-		// Возвращаем основной heap (если нужно дальше)
-		ID3D12DescriptorHeap* mainHeaps[] = { mSrvDescriptorHeap.Get() };
-		mCommandList->SetDescriptorHeaps(_countof(mainHeaps), mainHeaps);
+		// ============ END-OF-FRAME: return all TAA resources to COMMON ============
+		// Use the SAME frameIndex value as the ping-pong above (not yet incremented).
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mTAAColorBuffer->GetResource(),
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
+		mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+			mTAVelocityBuffer->GetResource(),
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
 
-		// Обновляем History Texture (копируем результат в историю)
-		UpdateHistoryTexture(mCommandList.Get());
+		if (frameIndex % 2 == 0)
+		{
+			// Prev was SRV, Current was RTV
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAPrevTexture->GetResource(),
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAACurrentTexture->GetResource(),
+				D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON));
+		}
+		else
+		{
+			// Current was SRV, Prev was RTV
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAACurrentTexture->GetResource(),
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON));
+			mCommandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(
+				mTAAPrevTexture->GetResource(),
+				D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COMMON));
+		}
 
-		// Завершение кадра
+		// Increment AFTER all barriers that branch on it
+		frameIndex = (frameIndex + 1) % 16;
+
 		backBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
 			CurrentBackBuffer(),
-			D3D12_RESOURCE_STATE_RENDER_TARGET,
-			D3D12_RESOURCE_STATE_PRESENT);
+			D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
 		mCommandList->ResourceBarrier(1, &backBufferBarrier);
 
 		hr = mCommandList->Close();
@@ -3442,7 +3546,156 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 	}
 }
 
-void TexColumnsApp::UpdateHistoryTexture(ID3D12GraphicsCommandList* cmdList)
+//void TexColumnsApp::Draw(const GameTimer& gt)
+//{
+//	static int frameCount = 0;
+//	frameCount++;
+//
+//	try
+//	{
+//		char msg[256]; 
+//
+//		auto cmdListAlloc = mCurrFrameResource->CmdListAlloc;
+//		HRESULT hr = cmdListAlloc->Reset();
+//		if (FAILED(hr)) ThrowIfFailed(hr);
+//
+//		// Устанавливаем PSO
+//		hr = mCommandList->Reset(cmdListAlloc.Get(), mPSOs["standardMesh"].Get());
+//		if (FAILED(hr)) ThrowIfFailed(hr);
+//
+//		mCommandList->RSSetViewports(1, &mScreenViewport);
+//		mCommandList->RSSetScissorRects(1, &mScissorRect);
+//
+//		// ============ ШАГ 1: РЕНДЕРИНГ СЦЕНЫ ============
+//		// Color Buffer -> RENDER_TARGET
+//		CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+//			mTAAColorBuffer->GetResource(),
+//			D3D12_RESOURCE_STATE_COMMON,
+//			D3D12_RESOURCE_STATE_RENDER_TARGET);
+//		mCommandList->ResourceBarrier(1, &barrier);
+//
+//		// Velocity Buffer -> RENDER_TARGET
+//		barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+//			mTAVelocityBuffer->GetResource(),
+//			D3D12_RESOURCE_STATE_COMMON,
+//			D3D12_RESOURCE_STATE_RENDER_TARGET);
+//		mCommandList->ResourceBarrier(1, &barrier);
+//
+//		// RTV дескрипторы
+//		CD3DX12_CPU_DESCRIPTOR_HANDLE colorRTV(
+//			mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+//			mTaaColorBufferRTVIndex,
+//			mRtvDescriptorSize);
+//
+//		CD3DX12_CPU_DESCRIPTOR_HANDLE velocityRTV(
+//			mRtvHeap->GetCPUDescriptorHandleForHeapStart(),
+//			mVelocityBufferRTVIndex,
+//			mRtvDescriptorSize);
+//
+//		CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(DepthStencilView());
+//
+//		// Устанавливаем 2 RTV
+//		D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = { colorRTV, velocityRTV };
+//		mCommandList->OMSetRenderTargets(2, rtvs, true, &dsv);
+//
+//		// Очистка
+//		mCommandList->ClearRenderTargetView(colorRTV, Colors::DarkBlue, 0, nullptr);
+//		float clearVel[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+//		mCommandList->ClearRenderTargetView(velocityRTV, clearVel, 0, nullptr);
+//		mCommandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+//
+//		D3D12_RESOURCE_DESC velDesc = mTAVelocityBuffer->GetResource()->GetDesc();
+//		sprintf_s(msg, "Vel format: %d, width: %d, height: %d\n",
+//			velDesc.Format, velDesc.Width, velDesc.Height);
+//		OutputDebugStringA(msg);
+//
+//		// Хипы
+//		ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
+//		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+//
+//		// Рендерим объекты
+//		mCommandList->SetGraphicsRootSignature(mStandMeshRootSignature.Get());
+//		auto passCB = mCurrFrameResource->PassCB->Resource();
+//		mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+//
+//		sprintf_s(msg, "Rendering %d meshes\n", mStandCustomMeshes.size());
+//		OutputDebugStringA(msg);
+//
+//		DrawCustomMeshes(mCommandList.Get(), mStandCustomMeshes);
+//
+//		sprintf_s(msg, "After mesh render\n");
+//		OutputDebugStringA(msg);
+//		
+//		// Переводим Velocity в SRV для чтения
+//		barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+//			mTAVelocityBuffer->GetResource(),
+//			D3D12_RESOURCE_STATE_RENDER_TARGET,
+//			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+//		mCommandList->ResourceBarrier(1, &barrier);
+//
+//		// Переводим BackBuffer в RENDER_TARGET
+//		CD3DX12_RESOURCE_BARRIER backBufferBarrier = CD3DX12_RESOURCE_BARRIER::Transition(
+//			CurrentBackBuffer(),
+//			D3D12_RESOURCE_STATE_PRESENT,
+//			D3D12_RESOURCE_STATE_RENDER_TARGET);
+//		mCommandList->ResourceBarrier(1, &backBufferBarrier);
+//
+//		// Устанавливаем простой вывод
+//		mCommandList->OMSetRenderTargets(1, &CurrentBackBufferView(), false, nullptr);
+//		mCommandList->ClearRenderTargetView(CurrentBackBufferView(), Colors::DarkGoldenrod, 0, nullptr);
+//
+//		// Используем простой шейдер для отладки
+//		mCommandList->SetPipelineState(mPSOs["TAA"].Get());
+//		mCommandList->SetGraphicsRootSignature(mTAARootSignature.Get());
+//
+//		// Привязываем Velocity как текстуру
+//		CD3DX12_GPU_DESCRIPTOR_HANDLE texHandle(
+//			mSrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(),
+//			mVelocityBufferSRVIndex,
+//			mCbvSrvDescriptorSize);
+//		mCommandList->SetGraphicsRootDescriptorTable(2, texHandle);
+//
+//		// Рисуем квад
+//		auto quadGeo = mFullscreenQuadGeo.get();
+//		D3D12_VERTEX_BUFFER_VIEW vbv = quadGeo->VertexBufferView();
+//		D3D12_INDEX_BUFFER_VIEW ibv = quadGeo->IndexBufferView();
+//		mCommandList->IASetVertexBuffers(0, 1, &vbv);
+//		mCommandList->IASetIndexBuffer(&ibv);
+//		mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+//		auto submesh = quadGeo->DrawArgs["quad"];
+//		mCommandList->DrawIndexedInstanced(submesh.IndexCount, 1,
+//			submesh.StartIndexLocation, submesh.BaseVertexLocation, 0);
+//
+//		// ============ IMGUI ============
+//		ID3D12DescriptorHeap* imguiHeaps[] = { mImGuiSrvDescriptorHeap.Get() };
+//		mCommandList->SetDescriptorHeaps(_countof(imguiHeaps), imguiHeaps);
+//		ImGui::Render();
+//		ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), mCommandList.Get());
+//
+//		
+//
+//		hr = mCommandList->Close();
+//		if (FAILED(hr)) ThrowIfFailed(hr);
+//
+//		ID3D12CommandList* cmdsLists[] = { mCommandList.Get() };
+//		mCommandQueue->ExecuteCommandLists(_countof(cmdsLists), cmdsLists);
+//
+//		hr = mSwapChain->Present(0, 0);
+//		if (FAILED(hr)) ThrowIfFailed(hr);
+//
+//		mCurrBackBuffer = (mCurrBackBuffer + 1) % SwapChainBufferCount;
+//		mCurrFrameResource->Fence = ++mCurrentFence;
+//		hr = mCommandQueue->Signal(mFence.Get(), mCurrentFence);
+//		if (FAILED(hr)) ThrowIfFailed(hr);
+//	}
+//	catch (...)
+//	{
+//		throw;
+//	}
+//}
+
+
+/*void TexColumnsApp::UpdateHistoryTexture(ID3D12GraphicsCommandList* cmdList)
 {
 	// Проверяем текущее состояние back buffer
 	D3D12_RESOURCE_STATES backBufferState = D3D12_RESOURCE_STATE_RENDER_TARGET; // после ImGui
@@ -3480,7 +3733,7 @@ void TexColumnsApp::UpdateHistoryTexture(ID3D12GraphicsCommandList* cmdList)
 		D3D12_RESOURCE_STATE_COPY_DEST,
 		D3D12_RESOURCE_STATE_COMMON);
 	cmdList->ResourceBarrier(1, &historyBarrier);
-}
+}*/
 
 //void TexColumnsApp::UpdateVisibleItems() {
 //	mVisibleRitems.clear();

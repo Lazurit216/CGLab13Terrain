@@ -125,6 +125,14 @@ struct VertexOut
     float2 TexC : TEXCOORD;
     float2 TexCl : TEXCOORD2;
     float height : HEIGHT;
+    float4 PrevPosH : POSITION2; // Для velocity (предыдущий кадр)
+    float4 CurPosH : POSITION3;
+};
+
+struct PixelOut
+{
+    float4 Color : SV_Target0; // Основной цвет (в color buffer)
+    float4 Velocity : SV_Target1; // Velocity (в velocity buffer)
 };
 
 
@@ -176,6 +184,13 @@ VertexOut VS(VertexIn vin)
     //vout.PosH = mul(posW, gViewProj);
     vout.PosH = mul(posW, gJitteredViewProj);
     
+    // Текущая позиция без джиттера (для velocity)
+    vout.CurPosH = mul(posW, gViewProj);
+    //vout.CurPosH /= vout.CurPosH.w;
+    // Предыдущая позиция (для velocity)
+    float4 prevPosW = mul(float4(posL, 1.0f), gPrevWorld);
+    vout.PrevPosH = mul(prevPosW, prevViewProj);
+    //vout.PrevPosH /= vout.PrevPosH.w;
     return vout;
 }
 float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, float3 tangentW)
@@ -259,13 +274,21 @@ float4 ShowBoundainBoxes(VertexOut pin) : SV_Target
     return float4(0, 0, 0, 0);
 }
 
-float4 PS(VertexOut pin) : SV_Target
+
+PixelOut PS(VertexOut pin) : SV_Target
 {
-    // Сначала проверяем границы
-    float4 borderColor = ShowBoundainBoxes(pin);
-    if (borderColor.a > 0.5)  
-        return borderColor;
+    PixelOut pout;
     
+    // === 1. ПРОВЕРКА ГРАНИЦ ===
+    float4 borderColor = ShowBoundainBoxes(pin);
+    if (borderColor.a > 0.5)
+    {
+        pout.Color = borderColor;
+        pout.Velocity = float4(0.0f, 0.0f, 0.0f, 1.0f);
+        return pout;
+    }
+    
+    // === 2. ОСНОВНОЙ ЦВЕТ (как в вашем шейдере) ===
     float4 diffuseAlbedo = gTerrDiffMap.Sample(gsamAnisotropicWrap, pin.TexC);
     float4 drawAlbedo = gBrushTexture.Sample(gsamAnisotropicWrap, pin.TexC);
     diffuseAlbedo *= gDiffuseAlbedo;
@@ -294,67 +317,66 @@ float4 PS(VertexOut pin) : SV_Target
 
     litColor.a = diffuseAlbedo.a;
     
+    // Кисть
     if (isBrushMode == 1)
     {
-        /*float distanceToBrush = distance(pin.PosW.xz, BrushWPos.xz);
-        float radius = BrushRadius + BrushFalofRadius; 
-
-        if (distanceToBrush <= radius)
-        {
-            // Вычисляем интенсивность кисти с плавным затуханием
-            float brushIntensity = 0.0f;
-            
-            if (distanceToBrush <= BrushRadius)
-            {
-                // Внутренний радиус - полная интенсивность
-                brushIntensity = 1.0f*BrushColors;
-            }
-            else
-            {
-                // Область затухания (falloff)
-                float falloffDistance = distanceToBrush - BrushRadius;
-                brushIntensity = 1.0f - smoothstep(0.0f, BrushFalofRadius, falloffDistance);
-            }*/
-            
-            // Создаем цвет кисти
-        float4 brushColor = GetBrushColor(pin); //float4(BrushColors.rgb, brushIntensity*BrushColors.a);//  * 0.7f);
-            
-            // Смешиваем с основным цветом
+        float4 brushColor = GetBrushColor(pin);
         litColor = lerp(litColor, brushColor, brushColor.a);
-            
-
-        //}
-        // Дополнительно: рисуем контур кисти
+        
         float outlineWidth = 2.0f;
         float distanceToBrush = distance(pin.PosW.xz, BrushWPos.xz);
         float radius = BrushRadius + BrushFalofRadius;
         if (abs(distanceToBrush - radius) < outlineWidth)
         {
-            // Белый контур
             float outlineIntensity = 1.0f - abs(distanceToBrush - radius) / outlineWidth;
             litColor.rgb = lerp(litColor.rgb, float3(.4f, .7f, 1.f), outlineIntensity * 0.8f);
         }
-        
     }
-    // =========================================
-    return litColor;
+    
+    pout.Color = litColor;
+    
+    // === 3. VELOCITY (для TAA) ===
+    // Конвертация из NDC в UV координаты
+    float2 posNDC = pin.CurPosH.xy / pin.CurPosH.w;
+    float2 prevPosNDC = pin.PrevPosH.xy / pin.PrevPosH.w;
+    
+    float2 uv = posNDC * 0.5f + 0.5f;
+    uv.y = 1.0f - uv.y;
+    
+    float2 prevUV = prevPosNDC * 0.5f + 0.5f;
+    prevUV.y = 1.0f - prevUV.y;
+    
+    pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
+    //pout.Velocity = float4(0, 0, 0, 0);
+
+    
+    return pout;
 }
 
-float4 WirePS(VertexOut pin) : SV_Target
+PixelOut WirePS(VertexOut pin) : SV_Target
 {
+    PixelOut pout;
+    pout.Velocity = float4(0.0f, 0.0f, 0.0f, 0.0f);
     // Сначала проверяем границы
     float4 borderColor = ShowBoundainBoxes(pin);
-    if (borderColor.a > 0.5)  return borderColor;
+    if (borderColor.a > 0.5)
+    {
+        pout.Color = borderColor;
+        return pout;
+    }
     
     // Основной цвет тайла
-    float minSize = 4;
-    float normalizedSize = saturate((gTileSize - minSize) / (gMapSize - minSize));
+        float minSize = 4;
+        float normalizedSize = saturate((gTileSize - minSize) / (gMapSize - minSize));
 
     // Нелинейное преобразование для большей контрастности
-    normalizedSize = smoothstep(0.0, 1.0, normalizedSize);
+        normalizedSize = smoothstep(0.0, 1.0, normalizedSize);
 
     // Очень насыщенные цвета
-    float4 smallColor = float4(0.1f, 0.1f, 0.8f, 1.0f); // Темно-синий
-    float4 largeColor = float4(0.9f, 0.1f, 0.1f, 1.0f); // Темно-красный
-    return lerp(smallColor, largeColor, normalizedSize);
+        float4 smallColor = float4(0.1f, 0.1f, 0.8f, 1.0f); // Темно-синий
+        float4 largeColor = float4(0.9f, 0.1f, 0.1f, 1.0f); // Темно-красный
+        pout.Color = lerp(smallColor, largeColor, normalizedSize);
+    
+    return pout;
+
 }

@@ -47,7 +47,17 @@ VSOut VS(uint vid : SV_VertexID)
     return output;
 }
 
-PSOut PS(VSOut pin)
+float4 fPS(VSOut pin) : SV_Target
+{
+    float2 velocity = gVelocity.Sample(gsamPointClamp, pin.TexC).xy;
+    
+    // Визуализируем velocity
+    // Умножаем на 10 для лучшей видимости
+    return float4(velocity * 1000.0f, 0.0f, 1.0f);
+}
+
+PSOut PS(VSOut pin) : SV_Target
+
 {
     PSOut pout;
     
@@ -81,19 +91,26 @@ PSOut PS(VSOut pin)
     
     // Финальный результат
     pout.BackBuffer = lerp(historyColor, currentColor, adaptiveBlend);
+    //pout.BackBuffer = gVelocity.Sample(gsamPointClamp, pin.TexC).rgbr * 10.0f;
     pout.HistoryTexture = pout.BackBuffer; // Обновляем историю
     
     // Вариант 1: показать только текущий кадр
-    pout.BackBuffer = currentColor;
-    pout.HistoryTexture = currentColor;
+    //pout.BackBuffer = currentColor;
+    //pout.HistoryTexture = currentColor;
 
     // Вариант 2: показать velocity
-    //pout.BackBuffer = float4(velocity, 0.0f, 1.0f);
+    //pout.BackBuffer = float4(velocity*1000.f, 0.0f, 1.0f);
     //pout.HistoryTexture = pout.BackBuffer;
+    
 
     // Вариант 3: показать историю
     //pout.BackBuffer = historyColor;
     //pout.HistoryTexture = historyColor;
+    
+        // Показываем разницу между current и history
+    //float diff = length(currentColor.rgb - historyColor.rgb);
+   //pout.BackBuffer = float4(diff, diff, diff, 1.0f);
+    //pout.HistoryTexture = currentColor; // Пишем current в историю
     
     return pout;
 }
