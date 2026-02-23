@@ -47,15 +47,6 @@ VSOut VS(uint vid : SV_VertexID)
     return output;
 }
 
-float4 fPS(VSOut pin) : SV_Target
-{
-    float2 velocity = gVelocity.Sample(gsamPointClamp, pin.TexC).xy;
-    
-    // Визуализируем velocity
-    // Умножаем на 10 для лучшей видимости
-    return float4(velocity * 1000.0f, 0.0f, 1.0f);
-}
-
 PSOut PS(VSOut pin) : SV_Target
 
 {

@@ -178,13 +178,6 @@ PixelOut PS(VertexOut pin) : SV_Target
 
 }
 
-/*PixelOut PS(VertexOut pin)
-{
-    PixelOut pout;
-    pout.Color = float4(1, 0, 0, 1);
-    pout.Velocity = float4(0, 1, 0, 1);
-    return pout;
-}*/
 
 // Wireframe шейдер
 PixelOut WirePS(VertexOut pin) : SV_Target
