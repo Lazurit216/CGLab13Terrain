@@ -253,6 +253,7 @@ private:
 	BrushConstants mBrushCB;
 	TAAConstants mTAACB;
 	AtmosphereConstants mAtmosCB;
+	float sunMotionSpeed=0.5;
 
 	POINT mLastMousePos;
 
@@ -605,8 +606,9 @@ void TexColumnsApp::SetupImGui()
 	ImGui::Text("Sun");
 	ImGui::Separator();
 
-	ImGui::SliderFloat3("Sun Direction", &mAtmosCB.SunDirection.x, -1.0f, 1.0f);
-	ImGui::SliderFloat("Sun Intensity", &mAtmosCB.SunIntensity, 0.0f, 20.0f);
+	ImGui::SliderFloat("Sun speed", &sunMotionSpeed, 0.0f, 10.0f, "%.03f");
+	//ImGui::SliderFloat3("Sun Direction", &mAtmosCB.SunDirection.x, -1.0f, 1.0f);
+	//ImGui::SliderFloat("Sun Intensity", &mAtmosCB.SunIntensity, 0.0f, 20.0f);
 
 	static float sunCol[3] = { 1.0f, 0.9f, 0.7f };
 	sunCol[0] = mAtmosCB.SunColor.x;
@@ -989,6 +991,34 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 
 void TexColumnsApp::UpdateAtmosphereCB(const GameTimer& gt)
 {
+	static float sunAngle = 0.0f;
+
+	// Вращаем солнце 
+	sunAngle += gt.DeltaTime() * sunMotionSpeed;
+
+	// Вычисляем позицию солнца на сфере
+	// Используем круговое движение в плоскости XZ с наклоном для эффекта заката
+	float sunX = sin(sunAngle) * 0.8f;
+	float sunY = cos(sunAngle) * 0.5f + 0.3f; 
+	float sunZ = cos(sunAngle) * 0.8f;
+
+	// Нормализуем направление
+	XMVECTOR sunDir = XMVector3Normalize(XMVectorSet(sunX, sunY, sunZ, 0.0f));
+	XMStoreFloat3(&mAtmosCB.SunDirection, sunDir);
+
+	// Вычисляем высоту солнца (Y-компонента направления)
+	float sunHeight = mAtmosCB.SunDirection.y;
+
+
+	if (sunHeight > 0.0f)
+	{
+		mAtmosCB.SunIntensity = 8.0f * sunHeight;
+	}
+	else
+	{
+
+		mAtmosCB.SunIntensity = 0.0f;
+	}
 	auto currAtmosCB = mCurrFrameResource->AtmosphereCB.get();
 	currAtmosCB->CopyData(0, mAtmosCB);
 }
@@ -1160,6 +1190,9 @@ void TexColumnsApp::LoadTextures()
 
 	LoadDDSTexturesFromFolder(L"../../Textures/Guard/");
 	LoadDDSTexturesFromFolder(L"../../Textures/Maxwell/");
+
+	LoadDDSTexture("default", L"../../Textures/default.dds");
+	LoadDDSTexture("default_normal", L"../../Textures/default_normal.dds");
 }
 
 
@@ -2324,15 +2357,31 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 			diffuseName = diffuseName.substr(0, diffuseName.length() - 4); //file extension
 			std::cout << "DIFFUSE: " << diffuseName << "\n";
 		}
+		else
+		{
+			// Если диффузной карты нет, используем заглушку
+			diffuseName = "default";
+			std::cout << "DIFFUSE: default (using fallback)\n";
+		}
 
 		//Normal
 		std::string normalName = "";
+		bool hasNormalMap = false;
+
 		if (scene->mMaterials[k]->GetTexture(aiTextureType_NORMALS, 0, &texPath) == AI_SUCCESS ||
 			scene->mMaterials[k]->GetTexture(aiTextureType_HEIGHT, 0, &texPath) == AI_SUCCESS)
 		{
 			normalName = std::string(texPath.C_Str());
 			normalName = normalName.substr(0, normalName.length() - 4);
+			hasNormalMap = true;
 			std::cout << "NORMAL: " << normalName << "\n";
+		}
+		else
+		{
+			// !!! ЕСЛИ НОРМАЛЬНОЙ КАРТЫ НЕТ, ИСПОЛЬЗУЕМ ЗАГЛУШКУ !!!
+			normalName = "default_normal";  // Имя заглушки
+			hasNormalMap = false;
+			std::cout << "NORMAL: default_normal (using fallback)\n";
 		}
 
 		// Displacement
