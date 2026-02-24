@@ -1012,7 +1012,7 @@ void TexColumnsApp::UpdateAtmosphereCB(const GameTimer& gt)
 
 	if (sunHeight > 0.0f)
 	{
-		mAtmosCB.SunIntensity = 8.0f * sunHeight;
+		mAtmosCB.SunIntensity = 2.0f * sunHeight;
 	}
 	else
 	{
