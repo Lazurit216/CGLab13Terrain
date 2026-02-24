@@ -97,6 +97,30 @@ struct TAAConstants
 
 };
 
+struct AtmosphereConstants
+{             
+
+
+    DirectX::XMFLOAT3 RayleighScattering = DirectX::XMFLOAT3(
+        0.2f,   // R
+        0.4f,   // G
+        0.8f);  // B
+
+    float RayleighHeight = 1.0f;
+
+    DirectX::XMFLOAT3 MieScattering = DirectX::XMFLOAT3(
+        0.1f,   // R
+        0.1f,   // G  
+        0.1f);  // B
+    float MieHeight = 0.2f;
+
+    DirectX::XMFLOAT3 SunDirection = DirectX::XMFLOAT3(0.25f, -0.95f, 0.18f); 
+    float SunIntensity = 8.0f;
+
+    DirectX::XMFLOAT3 SunColor = DirectX::XMFLOAT3(1.0f, 0.9f, 0.7f);
+    float AtmosphereRadius = 1.0f;
+};
+
 // Stores the resources needed for the CPU to build the command lists
 // for a frame.  
 struct FrameResource
@@ -116,11 +140,14 @@ public:
     // that reference it.  So each frame needs their own cbuffers.
    // std::unique_ptr<UploadBuffer<FrameConstants>> FrameCB = nullptr;
     std::unique_ptr<UploadBuffer<PassConstants>> PassCB = nullptr;
+    std::unique_ptr<UploadBuffer<AtmosphereConstants>> AtmosphereCB = nullptr;
     std::unique_ptr<UploadBuffer<MaterialConstants>> MaterialCB = nullptr;
     std::unique_ptr<UploadBuffer<ObjectConstants>> ObjectCB = nullptr;
     std::unique_ptr<UploadBuffer<TileConstants>> TerrainCB = nullptr;
     std::unique_ptr<UploadBuffer<BrushConstants>> BrushCB = nullptr;
     std::unique_ptr<UploadBuffer<TAAConstants>> TAACB = nullptr;
+
+
     // Fence value to mark commands up to this fence point.  This lets us
     // check if these frame resources are still in use by the GPU.
     UINT64 Fence = 0;

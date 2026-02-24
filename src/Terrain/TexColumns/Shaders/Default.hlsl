@@ -282,15 +282,31 @@ float2 CalcVelocity(float4 newPos, float4 oldPos)
     
     return (newPos - oldPos).xy * float2(0.5f, -0.5f);
 }
+float3 ApplyExposure(float3 color, float exposure)
+{
+    return color * exposure;
+}
+
+float3 ToneMapReinhard(float3 color)
+{
+    return color / (1.0f + color);
+}
+
 PixelOut PS(DS_OUTPUT pin) : SV_Target
 {
     PixelOut pout;
-    
-    // === ÎÑÍÎÂÍÎÉ ÖÂÅÒ (ךאך ג גארול רויהונו) ===
-    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
-    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
- 
-    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW);
+
+    float exposure = 1.2f;
+
+    float4 diffuseAlbedo =
+        gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+
+    float3 normalSample =
+        gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
+
+    float3 bumpedNormalW =
+        NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW);
+
     bumpedNormalW = normalize(bumpedNormalW);
 
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
@@ -300,26 +316,29 @@ PixelOut PS(DS_OUTPUT pin) : SV_Target
     const float shininess = 1.0f - gRoughness;
     Material mat = { diffuseAlbedo, gFresnelR0, shininess };
 
-    float3 directLight = ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.f);
-    float4 litColor = ambient + float4(directLight, 0.0f);
+    float3 directLight =
+        ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.0f);
 
-    litColor.a = diffuseAlbedo.a;
-    
-    pout.Color = litColor;
-    
-    // === VELOCITY (הכÿ TAA) ===
+    // === HDR color ===
+    float3 hdrColor = ambient.rgb + directLight;
+
+    // === Tone mapping pipeline ===
+    hdrColor = ApplyExposure(hdrColor, exposure);
+    hdrColor = ToneMapReinhard(hdrColor);
+
+    pout.Color = float4(hdrColor, diffuseAlbedo.a);
+
+    // === VELOCITY ===
     float2 posNDC = pin.CurPosH.xy / pin.CurPosH.w;
     float2 prevPosNDC = pin.PrevPosH.xy / pin.PrevPosH.w;
-    
+
     float2 uv = posNDC * 0.5f + 0.5f;
     uv.y = 1.0f - uv.y;
-    
+
     float2 prevUV = prevPosNDC * 0.5f + 0.5f;
     prevUV.y = 1.0f - prevUV.y;
-    
-    //pout.Velocity = float4(0, 0, 0, 0);
-    //pout.Velocity = float4(CalcVelocity(pin.CurPosH, pin.PrevPosH), 0, 0);
+
     pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
-    
+
     return pout;
 }

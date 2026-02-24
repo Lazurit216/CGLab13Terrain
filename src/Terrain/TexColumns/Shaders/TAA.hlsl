@@ -47,6 +47,7 @@ VSOut VS(uint vid : SV_VertexID)
     return output;
 }
 
+
 PSOut PS(VSOut pin) : SV_Target
 
 {

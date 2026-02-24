@@ -135,47 +135,67 @@ float3 NormalSampleToWorldSpace(float3 normalMapSample, float3 unitNormalW, floa
 
     return bumpedNormalW;
 }
+float3 ApplyToneMapping(float3 color)
+{
+    // Reinhard tone mapping
+    return color / (1.0f + color);
+}
+
+float3 ApplyExposure(float3 color, float exposure)
+{
+    return color * exposure;
+}
 
 PixelOut PS(VertexOut pin) : SV_Target
 {
     PixelOut pout;
     
-    float4 diffuseAlbedo = gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
-    float3 normalSample = gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
+    float4 diffuseAlbedo =
+        gDiffuseMap.Sample(gsamAnisotropicWrap, pin.TexC) * gDiffuseAlbedo;
+
+    float3 normalSample =
+        gNormalMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
+
     pin.NormalW = normalize(pin.NormalW);
-    float3 bumpedNormalW = NormalSampleToWorldSpace(normalSample.rgb, pin.NormalW, pin.TanW);
+    float3 bumpedNormalW =
+        NormalSampleToWorldSpace(normalSample, pin.NormalW, pin.TanW);
 
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
+
     float4 ambient = gAmbientLight * diffuseAlbedo;
-    
+
     const float shininess = 1.0f - gRoughness;
     Material mat = { diffuseAlbedo, gFresnelR0, shininess };
-    float3 shadowFactor = 1.0f;
-    float4 directLight = ComputeLighting(gLights, mat, pin.PosW,
-        bumpedNormalW, toEyeW, shadowFactor);
 
-    float4 litColor = ambient + directLight;
-    litColor.a = diffuseAlbedo.a;
-    
-    pout.Color = litColor;
-    
-    // === 2. VELOCITY (для TAA) ===
-    // Конвертация из NDC в UV координаты
-    float2 posNDC = pin.CurPosH.xy/ pin.CurPosH.w;
+    float3 shadowFactor = 1.0f;
+
+    float4 directLight =
+        ComputeLighting(gLights, mat, pin.PosW,
+                        bumpedNormalW, toEyeW, shadowFactor);
+
+    float3 hdrColor = (ambient + directLight).rgb;
+
+    // === ВАЖНО: та же экспозиция что и у неба ===
+    float exposure = 1.2f;
+
+    hdrColor = ApplyExposure(hdrColor, exposure);
+    hdrColor = ApplyToneMapping(hdrColor);
+
+    pout.Color = float4(hdrColor, diffuseAlbedo.a);
+
+    // === VELOCITY ===
+    float2 posNDC = pin.CurPosH.xy / pin.CurPosH.w;
     float2 prevPosNDC = pin.PrevPosH.xy / pin.PrevPosH.w;
-    
+
     float2 uv = posNDC * 0.5f + 0.5f;
     uv.y = 1.0f - uv.y;
-    
+
     float2 prevUV = prevPosNDC * 0.5f + 0.5f;
     prevUV.y = 1.0f - prevUV.y;
-    
-    pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
-    //pout.Velocity = float4(1, 0, 0, 1);
-    
-    return pout;
-    
 
+    pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
+
+    return pout;
 }
 
 

@@ -117,6 +117,7 @@ private:
 	void UpdateMainPassCB(const GameTimer& gt);
 	void UpdateBrushCB(const GameTimer& gt);
 	void UpdateTAA(const GameTimer& gt);
+	void UpdateAtmosphereCB(const GameTimer& gt);
 
 	void LoadDDSTexture(std::string name, std::wstring filename);
 	void LoadDDSTexturesFromFolder(const std::wstring& folderPath);
@@ -127,6 +128,8 @@ private:
 
 	void BuildCsRootSignature();
 	void BuildTerrainRootSignature();
+
+	void BuildSkyRootSignature();
 
 	void BuildDescriptorHeaps();
 	void BuildShadersAndInputLayout();
@@ -188,6 +191,7 @@ private:
 	ComPtr<ID3D12RootSignature> mStandMeshRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mTerrainRootSignature = nullptr;
 	ComPtr<ID3D12RootSignature> mTAARootSignature = nullptr;
+	ComPtr<ID3D12RootSignature> mSkyRootSignature = nullptr;
 
 
 	XMFLOAT2 jitters[16];
@@ -230,8 +234,6 @@ private:
 	ComPtr<ID3D12DescriptorHeap> mImGuiSrvDescriptorHeap;
 
 	std::unordered_map<std::string, std::unique_ptr<MeshGeometry>> mGeometries;
-
-	std::unique_ptr<MeshGeometry> mFullscreenQuadGeo;
 	
 	std::unordered_map<std::string, std::unique_ptr<Material>> mMaterials;
 	std::unordered_map<std::string, std::unique_ptr<Texture>> mTextures;
@@ -250,6 +252,7 @@ private:
 	PassConstants mMainPassCB;
 	BrushConstants mBrushCB;
 	TAAConstants mTAACB;
+	AtmosphereConstants mAtmosCB;
 
 	POINT mLastMousePos;
 
@@ -342,6 +345,8 @@ bool TexColumnsApp::Initialize()
 	LoadTextures();
 
 	BuildRootSignature();
+
+	BuildSkyRootSignature();
 
 	BuildStandMeshRootSignature();
 	BuildTerrainRootSignature();
@@ -482,6 +487,9 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateTerrainCBs(gt);
 
 	UpdateMainPassCB(gt);
+
+	UpdateAtmosphereCB(gt);
+
 	UpdateBrushCB(gt);
 	UpdateMaterialCBs(gt);
 
@@ -589,6 +597,49 @@ void TexColumnsApp::SetupImGui()
 	// Позиция второго окна (правее первого + небольшой отступ)
 	ImGui::SetWindowPos(ImVec2(350, 5));
 	ImGui::SetWindowSize(ImVec2(250, 200));
+	ImGui::End();
+
+	// === ОКНО 4: Atmosphere Settings ===
+	ImGui::Begin("Atmosphere", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	ImGui::Text("Sun");
+	ImGui::Separator();
+
+	ImGui::SliderFloat3("Sun Direction", &mAtmosCB.SunDirection.x, -1.0f, 1.0f);
+	ImGui::SliderFloat("Sun Intensity", &mAtmosCB.SunIntensity, 0.0f, 20.0f);
+
+	static float sunCol[3] = { 1.0f, 0.9f, 0.7f };
+	sunCol[0] = mAtmosCB.SunColor.x;
+	sunCol[1] = mAtmosCB.SunColor.y;
+	sunCol[2] = mAtmosCB.SunColor.z;
+
+	if (ImGui::ColorEdit3("Sun Color", sunCol))
+	{
+		mAtmosCB.SunColor = { sunCol[0], sunCol[1], sunCol[2] };
+	}
+
+	ImGui::Separator();
+	ImGui::Text("Rayleigh Scattering");
+
+	ImGui::SliderFloat3("Rayleigh RGB", &mAtmosCB.RayleighScattering.x, 0.0f, 2.0f);
+	ImGui::SliderFloat("Rayleigh Height", &mAtmosCB.RayleighHeight, 0.0f, 5.0f);
+
+	ImGui::Separator();
+	ImGui::Text("Mie Scattering");
+
+	ImGui::SliderFloat3("Mie RGB", &mAtmosCB.MieScattering.x, 0.0f, 2.0f);
+	ImGui::SliderFloat("Mie Height", &mAtmosCB.MieHeight, 0.0f, 5.0f);
+
+	ImGui::Separator();
+
+	ImGui::Text("Debug Info");
+	ImGui::Text("Sun Dir: %.2f %.2f %.2f",
+		mAtmosCB.SunDirection.x,
+		mAtmosCB.SunDirection.y,
+		mAtmosCB.SunDirection.z);
+
+	ImGui::SetWindowPos(ImVec2(350, 220));
+	ImGui::SetWindowSize(ImVec2(300, 350));
 	ImGui::End();
 }
 
@@ -908,22 +959,71 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	mMainPassCB.TotalTime = gt.TotalTime();
 	mMainPassCB.DeltaTime = gt.DeltaTime();
 
-	mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
+	//mMainPassCB.AmbientLight = { 0.25f, 0.25f, 0.35f, 1.0f };
 
-	mMainPassCB.Lights[0].Direction = { 0.57735f, -0.57735f, 0.57735f };
-	mMainPassCB.Lights[0].Strength = { 0.8f, 0.8f, 0.8f };
+	//mMainPassCB.Lights[0].Direction = { 0.57735f, -0.57735f, 0.57735f };
+	//mMainPassCB.Lights[0].Strength = { 0.8f, 0.8f, 0.8f };
 
-	mMainPassCB.Lights[1].Direction = { -0.57735f, -0.57735f, 0.57735f };
-	mMainPassCB.Lights[1].Strength = { 0.4f, 0.4f, 0.4f };
+	//mMainPassCB.Lights[1].Direction = { -0.57735f, -0.57735f, 0.57735f };
+	//mMainPassCB.Lights[1].Strength = { 0.4f, 0.4f, 0.4f };
 
-	mMainPassCB.Lights[2].Direction = { 0.0f, -0.707f, -0.707f };
-	mMainPassCB.Lights[2].Strength = { 0.2f, 0.2f, 0.2f };
+	//mMainPassCB.Lights[2].Direction = { 0.0f, -0.707f, -0.707f };
+	//mMainPassCB.Lights[2].Strength = { 0.2f, 0.2f, 0.2f };
+
+	mMainPassCB.AmbientLight = { 0.03f, 0.04f, 0.06f, 1.0f };
+
+	mMainPassCB.Lights[0].Direction = { 0.25f, -0.95f, 0.18f };
+	mMainPassCB.Lights[0].Strength = { 2.0f, 1.5f, 1.0f };
+
+	mMainPassCB.Lights[1].Strength = { 0,0,0 };
+	mMainPassCB.Lights[2].Strength = { 0,0,0 };
 
 	mMainPassCB.gScale = mScale;
 	mMainPassCB.gTessellationFactor = mTessellationFactor;
 
 	auto currPassCB = mCurrFrameResource->PassCB.get();
 	currPassCB->CopyData(0, mMainPassCB);
+}
+
+void TexColumnsApp::UpdateAtmosphereCB(const GameTimer& gt)
+{
+	//// Направление солнца (движется по кругу)
+	//static float time = 0.0f;
+	//time += gt.DeltaTime() * 0.2f;
+
+	//// Солнце движется по небу
+	//float sunX = sin(time * 0.5f) * 0.8f;
+	//float sunY = cos(time * 1.3f) * 0.5f + 0.3f;
+	//float sunZ = cos(time * 0.5f) * 0.8f;
+
+	////mAtmosCB.SunDirection = mMainPassCB.Lights[0].Direction;//XMVector3Normalize(XMVectorSet(sunX, sunY, sunZ, 0.0f));
+	////XMStoreFloat3(&mAtmosCB.SunDirection, sunDir);
+
+	//// --- Параметры солнца (безопасные значения) ---
+	//mAtmosCB.SunIntensity = 8.0f;                    // Умеренная яркость
+	//mAtmosCB.SunColor = DirectX::XMFLOAT3(1.0f, 0.9f, 0.7f); // Теплый свет
+
+	//// --- Rayleigh scattering (синее небо) ---
+	//mAtmosCB.RayleighScattering = DirectX::XMFLOAT3(
+	//	0.2f,   // R
+	//	0.4f,   // G
+	//	0.8f);  // B
+
+	//mAtmosCB.RayleighHeight = 1.0f;                  // Высота слоя
+
+	//// --- Mie scattering (пыль/дым) ---
+	//mAtmosCB.MieScattering = DirectX::XMFLOAT3(
+	//	0.1f,   // R
+	//	0.1f,   // G  
+	//	0.1f);  // B
+
+	//mAtmosCB.MieHeight = 0.2f;                       // Тонкий слой
+
+	//// --- Радиус атмосферы (не используется в простой модели) ---
+	//mAtmosCB.AtmosphereRadius = 1.0f;                 // Не влияет
+
+	auto currAtmosCB = mCurrFrameResource->AtmosphereCB.get();
+	currAtmosCB->CopyData(0, mAtmosCB);
 }
 
 void TexColumnsApp::UpdateTAA(const GameTimer& gt)
@@ -1364,6 +1464,39 @@ void TexColumnsApp::BuildTAARootSignature()
 		IID_PPV_ARGS(mTAARootSignature.GetAddressOf())));
 }
 
+void TexColumnsApp::BuildSkyRootSignature()
+{
+	CD3DX12_ROOT_PARAMETER slotRootParameter[2];
+
+	// b1 = PassCB (view/proj etc.)
+	slotRootParameter[0].InitAsConstantBufferView(0);
+
+	// b0 = AtmosphereCB
+	slotRootParameter[1].InitAsConstantBufferView(1);
+
+	CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(
+		2,
+		slotRootParameter,
+		0,
+		nullptr,
+		D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
+	);
+
+	ComPtr<ID3DBlob> serializedRootSig = nullptr;
+	ComPtr<ID3DBlob> errorBlob = nullptr;
+
+	ThrowIfFailed(D3D12SerializeRootSignature(
+		&rootSigDesc,
+		D3D_ROOT_SIGNATURE_VERSION_1,
+		serializedRootSig.GetAddressOf(),
+		errorBlob.GetAddressOf()));
+
+	ThrowIfFailed(md3dDevice->CreateRootSignature(
+		0,
+		serializedRootSig->GetBufferPointer(),
+		serializedRootSig->GetBufferSize(),
+		IID_PPV_ARGS(mSkyRootSignature.GetAddressOf())));
+}
 
 void TexColumnsApp::BuildDescriptorHeaps()
 {
@@ -1827,6 +1960,9 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["TaaVS"] = d3dUtil::CompileShader(L"Shaders\\TAA.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["TaaPS"] = d3dUtil::CompileShader(L"Shaders\\TAA.hlsl", nullptr, "PS", "ps_5_1");
 
+	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
+
 
 	mInputLayout =
 	{
@@ -2047,6 +2183,49 @@ void TexColumnsApp::BuildPSOs()
 			&taaPsoDesc,
 			IID_PPV_ARGS(&mPSOs["TAA"])));
 	}
+
+	//PSO for Sky
+	{
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+
+		psoDesc.InputLayout = { nullptr, 0 }; // fullscreen triangle
+		psoDesc.pRootSignature = mSkyRootSignature.Get();
+		psoDesc.VS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["skyVS"]->GetBufferPointer()),
+			mShaders["skyVS"]->GetBufferSize()
+		};
+		psoDesc.PS =
+		{
+			reinterpret_cast<BYTE*>(mShaders["skyPS"]->GetBufferPointer()),
+			mShaders["skyPS"]->GetBufferSize()
+		};
+
+		psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+		psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+
+		psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+
+		psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+		psoDesc.DepthStencilState.DepthEnable = FALSE;
+		//psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+		//psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+
+		psoDesc.SampleMask = UINT_MAX;
+		psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		psoDesc.NumRenderTargets = 1;
+		psoDesc.RTVFormats[0] = mBackBufferFormat;  // или HDR format если используешь HDR
+		psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+
+		psoDesc.SampleDesc.Count = 1;
+		psoDesc.SampleDesc.Quality = 0;
+
+		ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(
+			&psoDesc,
+			IID_PPV_ARGS(&mPSOs["sky"])));
+	}
+
+	OutputDebugStringA("PSOs Created.\n");
 }
 
 void TexColumnsApp::BuildFrameResources()
@@ -2723,6 +2902,7 @@ void TexColumnsApp::DrawCustomMeshes(ID3D12GraphicsCommandList* cmdList, const s
 
 	auto objectCB = mCurrFrameResource->ObjectCB->Resource();
 	auto matCB = mCurrFrameResource->MaterialCB->Resource();
+	auto passCB = mCurrFrameResource->PassCB->Resource();
 
 	// For each render item...
 	for (size_t i = 0; i < customMeshes.size(); ++i)
@@ -2749,6 +2929,7 @@ void TexColumnsApp::DrawCustomMeshes(ID3D12GraphicsCommandList* cmdList, const s
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
 
 		cmdList->SetGraphicsRootConstantBufferView(2, objCBAddress);  // b0 - per object
+		cmdList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
 		cmdList->SetGraphicsRootConstantBufferView(4, matCBAddress);  // b1 - per material
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
@@ -2762,6 +2943,10 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 
 	auto objectCB = mCurrFrameResource->ObjectCB->Resource();
 	auto matCB = mCurrFrameResource->MaterialCB->Resource();
+	auto passCB = mCurrFrameResource->PassCB->Resource();
+
+
+
 
 	// For each render item...
 	for (size_t i = 0; i < ritems.size(); ++i)
@@ -2792,6 +2977,8 @@ void TexColumnsApp::DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const st
 		D3D12_GPU_VIRTUAL_ADDRESS matCBAddress = matCB->GetGPUVirtualAddress() + ri->Mat->MatCBIndex * matCBByteSize;
 
 		cmdList->SetGraphicsRootConstantBufferView(3, objCBAddress);  // b0 - per object
+		// Slot 4 = b1 = cbPass — must be set before any draw
+		cmdList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
 		cmdList->SetGraphicsRootConstantBufferView(5, matCBAddress);  // b1 - per material
 
 		cmdList->DrawIndexedInstanced(ri->IndexCount, 1, ri->StartIndexLocation, ri->BaseVertexLocation, 0);
@@ -2867,6 +3054,7 @@ void TexColumnsApp::DrawTilesRenderItems(ID3D12GraphicsCommandList* cmdList, con
 	}
 }
 
+
 void TexColumnsApp::Draw(const GameTimer& gt)
 {
 	static int frameCount = 0;
@@ -2906,26 +3094,57 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 			mVelocityBufferRTVIndex, mRtvDescriptorSize);
 		CD3DX12_CPU_DESCRIPTOR_HANDLE dsv(DepthStencilView());
 
+
 		D3D12_CPU_DESCRIPTOR_HANDLE rtvs[2] = { colorRTV, velocityRTV };
 		mCommandList->OMSetRenderTargets(2, rtvs, false, &dsv);
 		mCommandList->ClearRenderTargetView(colorRTV, Colors::Black, 0, nullptr);
 		float clearVel[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 		mCommandList->ClearRenderTargetView(velocityRTV, clearVel, 0, nullptr);
+
 		mCommandList->ClearDepthStencilView(dsv,
 			D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+
+
+		// ===== SKY PASS (before geometry) =====
+
+		// Sky writes to color buffer only — 1 RTV, no velocity, no depth.
+		// This must match NumRenderTargets=1 declared in the sky PSO.
+		mCommandList->OMSetRenderTargets(1, &colorRTV, false, nullptr);
+
+		mCommandList->SetPipelineState(mPSOs["sky"].Get());
+
+		mCommandList->SetGraphicsRootSignature(mSkyRootSignature.Get());
+		mCommandList->SetGraphicsRootConstantBufferView(
+			0, mCurrFrameResource->PassCB->Resource()->GetGPUVirtualAddress());
+		mCommandList->SetGraphicsRootConstantBufferView(
+			1, mCurrFrameResource->AtmosphereCB->Resource()->GetGPUVirtualAddress());
+
+		mCommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		mCommandList->DrawInstanced(3, 1, 0, 0);
+
+		// Restore both RTVs + DSV for geometry passes that follow.
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvsBoth[2] = { colorRTV, velocityRTV };
+		mCommandList->OMSetRenderTargets(2, rtvsBoth, false, &dsv);
+
+		// ===== END SKY PASS =====
 
 		ID3D12DescriptorHeap* descriptorHeaps[] = { mSrvDescriptorHeap.Get() };
 		mCommandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
-		// Opaque items
+		// Restore correct PSO before opaque geometry
+		if (isFillModeSolid)
+			mCommandList->SetPipelineState(mPSOs["opaque"].Get());
+		else
+			mCommandList->SetPipelineState(mPSOs["wireframe"].Get());
+
+		// Opaque items — descriptor heap is already set, no need to call it again
 		mCommandList->SetGraphicsRootSignature(mRootSignature.Get());
-		auto passCB = mCurrFrameResource->PassCB->Resource();
-		mCommandList->SetGraphicsRootConstantBufferView(4, passCB->GetGPUVirtualAddress());
 		DrawRenderItems(mCommandList.Get(), mOpaqueRitems);
 
+		
 		// Custom meshes (MeshStandard.hlsl writes real velocity)
 		mCommandList->SetGraphicsRootSignature(mStandMeshRootSignature.Get());
-		mCommandList->SetGraphicsRootConstantBufferView(3, passCB->GetGPUVirtualAddress());
+
 		if (isFillModeSolid)
 			mCommandList->SetPipelineState(mPSOs["standardMesh"].Get());
 		else
@@ -2933,7 +3152,9 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		if (!mStandCustomMeshes.empty())
 			DrawCustomMeshes(mCommandList.Get(), mStandCustomMeshes);
 
+
 		// Terrain
+		auto passCB = mCurrFrameResource->PassCB->Resource();
 		mVisibleTiles.clear();
 		mVisibleTiles = mTerrain->GetVisibleTiles();
 		if (!mVisibleTiles.empty())
@@ -2946,6 +3167,8 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 			mCommandList->SetGraphicsRootConstantBufferView(5, passCB->GetGPUVirtualAddress());
 			DrawTilesRenderItems(mCommandList.Get(), mVisibleTiles);
 		}
+
+
 
 		// ---- Frame 1 bootstrap: seed both history buffers with first frame ----
 		// After this block, Prev and Current are back in COMMON.
@@ -3152,6 +3375,8 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		throw;
 	}
 }
+
+
 
 void TexColumnsApp::GenerateTransformedHaltonSequence(float viewSizeX, float viewSizeY, XMFLOAT2* outJitters)
 {

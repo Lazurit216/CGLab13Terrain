@@ -273,37 +273,52 @@ float4 ShowBoundainBoxes(VertexOut pin) : SV_Target
     // Это позволит основной функции WirePS продолжить выполнение
     return float4(0, 0, 0, 0);
 }
+float3 ApplyExposure(float3 color, float exposure)
+{
+    return color * exposure;
+}
 
+float3 ToneMapReinhard(float3 color)
+{
+    return color / (1.0f + color);
+}
 
 PixelOut PS(VertexOut pin) : SV_Target
 {
     PixelOut pout;
-    
-    // === 1. ПРОВЕРКА ГРАНИЦ ===
+
+    float exposure = 1.2f;
+
+    // === Bounding boxes ===
     float4 borderColor = ShowBoundainBoxes(pin);
     if (borderColor.a > 0.5)
     {
         pout.Color = borderColor;
-        pout.Velocity = float4(0.0f, 0.0f, 0.0f, 1.0f);
+        pout.Velocity = float4(0, 0, 0, 1);
         return pout;
     }
-    
-    // === 2. ОСНОВНОЙ ЦВЕТ (как в вашем шейдере) ===
-    float4 diffuseAlbedo = gTerrDiffMap.Sample(gsamAnisotropicWrap, pin.TexC);
-    float4 drawAlbedo = gBrushTexture.Sample(gsamAnisotropicWrap, pin.TexC);
-    diffuseAlbedo *= gDiffuseAlbedo;
-    
-    if (drawAlbedo.a > 0.001f)
-    {
-        diffuseAlbedo.rgb = lerp(diffuseAlbedo.rgb, drawAlbedo.rgb, drawAlbedo.a);
-    }
 
-    float3 normalMapSample = gTerrNormMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
-    
+    // === Base color ===
+    float4 diffuseAlbedo =
+        gTerrDiffMap.Sample(gsamAnisotropicWrap, pin.TexC);
+
+    float4 drawAlbedo =
+        gBrushTexture.Sample(gsamAnisotropicWrap, pin.TexC);
+
+    diffuseAlbedo *= gDiffuseAlbedo;
+
+    if (drawAlbedo.a > 0.001f)
+        diffuseAlbedo.rgb =
+            lerp(diffuseAlbedo.rgb, drawAlbedo.rgb, drawAlbedo.a);
+
+    float3 normalMapSample =
+        gTerrNormMap.Sample(gsamAnisotropicWrap, pin.TexC).rgb;
+
     pin.NormalW = normalize(pin.NormalW);
     pin.TangentW = normalize(pin.TangentW);
-    
-    float3 bumpedNormalW = NormalSampleToWorldSpace(normalMapSample, pin.NormalW, pin.TangentW);
+
+    float3 bumpedNormalW =
+        NormalSampleToWorldSpace(normalMapSample, pin.NormalW, pin.TangentW);
 
     float3 toEyeW = normalize(gEyePosW - pin.PosW);
 
@@ -312,44 +327,51 @@ PixelOut PS(VertexOut pin) : SV_Target
     const float shininess = 1.0f - gRoughness;
     Material mat = { diffuseAlbedo, gFresnelR0, shininess };
 
-    float3 directLight = ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.f);
-    float4 litColor = ambient + float4(directLight, 0.0f);
+    float3 directLight =
+        ComputeLighting(gLights, mat, pin.PosW, bumpedNormalW, toEyeW, 1.0f);
 
-    litColor.a = diffuseAlbedo.a;
-    
-    // Кисть
+    // === HDR color ===
+    float3 hdrColor = ambient.rgb + directLight;
+
+    // === Brush overlay (в HDR) ===
     if (isBrushMode == 1)
     {
         float4 brushColor = GetBrushColor(pin);
-        litColor = lerp(litColor, brushColor, brushColor.a);
-        
+        hdrColor = lerp(hdrColor, brushColor.rgb, brushColor.a);
+
         float outlineWidth = 2.0f;
         float distanceToBrush = distance(pin.PosW.xz, BrushWPos.xz);
         float radius = BrushRadius + BrushFalofRadius;
+
         if (abs(distanceToBrush - radius) < outlineWidth)
         {
-            float outlineIntensity = 1.0f - abs(distanceToBrush - radius) / outlineWidth;
-            litColor.rgb = lerp(litColor.rgb, float3(.4f, .7f, 1.f), outlineIntensity * 0.8f);
+            float outlineIntensity =
+                1.0f - abs(distanceToBrush - radius) / outlineWidth;
+
+            hdrColor = lerp(hdrColor,
+                            float3(.4f, .7f, 1.f),
+                            outlineIntensity * 0.8f);
         }
     }
-    
-    pout.Color = litColor;
-    
-    // === 3. VELOCITY (для TAA) ===
-    // Конвертация из NDC в UV координаты
+
+    // === Tone mapping ===
+    hdrColor = ApplyExposure(hdrColor, exposure);
+    hdrColor = ToneMapReinhard(hdrColor);
+
+    pout.Color = float4(hdrColor, diffuseAlbedo.a);
+
+    // === VELOCITY ===
     float2 posNDC = pin.CurPosH.xy / pin.CurPosH.w;
     float2 prevPosNDC = pin.PrevPosH.xy / pin.PrevPosH.w;
-    
+
     float2 uv = posNDC * 0.5f + 0.5f;
     uv.y = 1.0f - uv.y;
-    
+
     float2 prevUV = prevPosNDC * 0.5f + 0.5f;
     prevUV.y = 1.0f - prevUV.y;
-    
-    pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
-    //pout.Velocity = float4(0, 0, 0, 0);
 
-    
+    pout.Velocity = float4(uv - prevUV, 0.0f, 1.0f);
+
     return pout;
 }
 
