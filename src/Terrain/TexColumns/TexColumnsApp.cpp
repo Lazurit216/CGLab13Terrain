@@ -158,6 +158,8 @@ private:
 	void BuildMarchingCubesMesh();
 
 	void BuildRenderItems();
+	void CreateMCRenderItem();
+	void UpdateMCRenderItem();//RenderMarchingCubes();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
 	void DrawCustomMeshes(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& customMeshes);
 	void DrawTilesRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<Tile*>& tiles);
@@ -266,6 +268,8 @@ private:
 
 	MarchingCubes::NoiseParams mNoiseParams;
 	bool mRegenerateMarching = false;
+	bool mUseHeightTexture = false;
+	UINT mMCRenderItemIndex = -1;
 
 	POINT mLastMousePos;
 
@@ -511,13 +515,7 @@ void TexColumnsApp::Update(const GameTimer& gt)
 
 	UpdateTAA(gt);
 
-	if (mRegenerateMarching)
-	{
-		BuildMarchingCubesMesh();
-
-		mRegenerateMarching = false;
-	}
-
+	
 	SetupImGui();
 }
 void TexColumnsApp::SetupImGui()
@@ -665,8 +663,14 @@ void TexColumnsApp::SetupImGui()
 
 
 	// ОКНО 5 Marching cubes
-	ImGui::Begin("Marching Generation", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
+	ImGui::Begin("Marching Generation", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+	if (ImGui::RadioButton("Perlin Noise", !mUseHeightTexture)) mUseHeightTexture = false;
+	ImGui::SameLine();
+	if (ImGui::RadioButton("Height texture", mUseHeightTexture)) mUseHeightTexture = true;
+
+	if(!mUseHeightTexture)
+	{
 	ImGui::Text("Noise Parameters");
 	ImGui::Separator();
 
@@ -678,10 +682,12 @@ void TexColumnsApp::SetupImGui()
 	ImGui::DragFloat("Amplitude", &mNoiseParams.amplitude, 1.0f, 0.0f, 200.0f, "%.1f");
 	ImGui::DragFloat("Base Height", &mNoiseParams.baseHeight, 1.0f, 0.0f, 50.0f, "%.1f");
 
-	int iSeed=1234;
-	ImGui::InputInt("Seed",&iSeed);
+	static int iSeed = 42;
+	ImGui::InputInt("Seed", &iSeed);
 	mNoiseParams.seed = iSeed;
 	ImGui::Separator();
+	}
+
 
 	// Кнопка для регенерации
 	if (ImGui::Button("Regenerate Marching", ImVec2(200, 30)))
@@ -2916,10 +2922,6 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 
 	//Height map
 
-	// ── 5a. Load stone_disp.dds on the CPU ───────────────────────────────────
-	// We need the raw pixel values as floats, not the GPU resource.
-	// DirectXTex::LoadFromDDSFile reads the file independently of GPU.
-
 	DirectX::ScratchImage scratchImage;
 	HRESULT hr = DirectX::LoadFromDDSFile(
 		L"../../Textures/stone_disp.dds",
@@ -2933,8 +2935,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 		return;
 	}
 
-	// If the texture is block-compressed (BC1/BC4/BC5/etc.), Convert() will fail
-// because it only operates on uncompressed formats. Decompress first.
+
 	DirectX::ScratchImage decompressed;
 	const DirectX::Image* srcImage = scratchImage.GetImage(0, 0, 0);
 
@@ -2958,7 +2959,6 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 		OutputDebugStringA(dbg);
 	}
 
-	// Now convert the uncompressed image to R32_FLOAT for easy float sampling
 	DirectX::ScratchImage converted;
 	hr = DirectX::Convert(
 		*srcImage,
@@ -2983,35 +2983,16 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 		texW, texH, (UINT)img->format);
 	OutputDebugStringA(dbgFmt);
 
-//Perlin Noise
-	//MarchingCubes::NoiseParams np;
-	//np.worldOffsetX = 0.0f;     // scroll X through infinite noise
-	//np.worldOffsetZ = 0.0f;     // scroll Z through infinite noise
-	//np.frequency = 0.003f;   // ~1 hill per 333 world units
-	//np.octaves = 5;        // 5 layers: large hills + medium bumps + fine rock detail
-	//np.amplitude = 60.0f;     // ±6 voxels of vertical deformation
-	//np.baseHeight = 14.0f;    // surface sits ~14 voxels from field bottom
-	//np.seed = 1337u;    // change for a different landscape
-	// ── 5b. Voxel grid parameters ─────────────────────────────────────────────
-	//
-	//  fieldX, fieldZ: horizontal resolution of the voxel grid.
-	//                  128×128 is a good starting point — larger = more detail
-	//                  but proportionally more vertices and memory.
-	//  fieldY:         vertical cells. 48 gives ~5 solid layers at full height.
-	//  plateauScale:   max height in VOXELS. 36 out of 48 means the tallest
-	//                  point fills 75% of the Y range, leaving air above.
-	//  cellSize:       world units per voxel. 8.0 makes a 128×128 grid
-	//                  span 1024 world units — matching your terrain size.
-	//
+
 	const int   fieldX = 64;
 	const int   fieldY = 24;
 	const int   fieldZ = 64;
 	const float plateauScale = 18;
 	const float cellSize = 16.0f;   // → total X/Z extent = 128 * 8 = 1024
 
-	bool useHeightTexture = false;
+
 	MarchingCubes::ScalarField field;
-	if (useHeightTexture)
+	if (mUseHeightTexture)
 	{
 		 field = MarchingCubes::HeightmapToScalarField(
 			data, texW, texH,
@@ -3025,7 +3006,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 			fieldX, fieldY, fieldZ, cellSize, mNoiseParams);
 	}
 
-	// ── 5c. Run marching cubes ────────────────────────────────────────────────
+	// ── Run marching cubes ────────────────────────────────────────────────
 	auto mcResult = MarchingCubes::Polygonize(field, 0.5f);
 	auto& mcVerts = mcResult.Vertices;
 	auto& mcIndices = mcResult.Indices;
@@ -3061,7 +3042,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 	OutputDebugStringA(dbgMsg);
 
 
-	// ── 5d. Upload to a dedicated MeshGeometry ───────────────────────────────
+	// ── Upload to a dedicated MeshGeometry ───────────────────────────────
 	//
 	// We use uint32_t indices (R32_UINT) because MC on a 128³ grid can
 	// produce far more than 65535 vertices.
@@ -3169,30 +3150,60 @@ void TexColumnsApp::BuildRenderItems()
 	RenderCustomMesh("Guard2", "Guard", "", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(50, 160, 100));
 	RenderCustomMesh("maxwell", "maxwell", "", XMMatrixScaling(1., 1., 1.), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(75, 100, 110));
 
-	if (mGeometries.count("mcGeo"))
+	CreateMCRenderItem();
+}
+void TexColumnsApp::UpdateMCRenderItem()
+{
+	// Ищем существующий MC рендер айтем
+	for (auto& item : mAllRitems)
 	{
-		auto mcRitem = std::make_unique<RenderItem>();
-		mcRitem->Name = "mc_plateau";
-		mcRitem->ObjCBIndex = (UINT)mAllRitems.size();
+		if (item && item->Name == "mc_plateau")
+		{
+			// Обновляем ссылку на новую геометрию
+			item->Geo = mGeometries["mcGeo"].get();
+			item->IndexCount = mGeometries["mcGeo"]->DrawArgs["plateau"].IndexCount;
+			item->NumFramesDirty = gNumFrameResources;
 
-		XMMATRIX mcWorld = XMMatrixTranslation(marchingPos.x, marchingPos.y, marchingPos.z);
-		XMStoreFloat4x4(&mcRitem->World, mcWorld);
-		XMStoreFloat4x4(&mcRitem->PrevWorld, mcWorld);
-		XMStoreFloat4x4(&mcRitem->TexTransform, XMMatrixIdentity());
-
-		mcRitem->Geo = mGeometries["mcGeo"].get();
-		mcRitem->Mat = mMaterials["mc_plateau"].get();
-		mcRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
-		mcRitem->IndexCount = mGeometries["mcGeo"]->DrawArgs["plateau"].IndexCount;
-		mcRitem->StartIndexLocation = 0;
-		mcRitem->BaseVertexLocation = 0;
-
-		mAllRitems.push_back(std::move(mcRitem));
-
-		// Goes to mMCRitems ONLY — not mStandCustomMeshes, not mOpaqueRitems.
-		// mMCRitems gets its own PSO (mc / mcWire) in Draw().
-		mMCRitems.push_back(mAllRitems.back().get());
+			OutputDebugStringA("MC render item updated to use new geometry\n");
+			return;
+		}
 	}
+
+	// Если не нашли - создаем новый
+	CreateMCRenderItem();
+}
+
+void TexColumnsApp::CreateMCRenderItem()
+{
+	auto mcRitem = std::make_unique<RenderItem>();
+	mcRitem->Name = "mc_plateau";
+	mcRitem->ObjCBIndex = (UINT)mAllRitems.size();
+
+	XMMATRIX mcWorld = XMMatrixTranslation(marchingPos.x, marchingPos.y, marchingPos.z);
+	XMStoreFloat4x4(&mcRitem->World, mcWorld);
+	XMStoreFloat4x4(&mcRitem->PrevWorld, mcWorld);
+	XMStoreFloat4x4(&mcRitem->TexTransform, XMMatrixIdentity());
+
+	mcRitem->Geo = mGeometries["mcGeo"].get();
+	mcRitem->Mat = mMaterials["mc_plateau"].get();
+	mcRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	mcRitem->IndexCount = mGeometries["mcGeo"]->DrawArgs["plateau"].IndexCount;
+	mcRitem->StartIndexLocation = 0;
+	mcRitem->BaseVertexLocation = 0;
+
+	mAllRitems.push_back(std::move(mcRitem));
+
+	// Обновляем список MC ритемов
+	mMCRitems.clear();
+	for (auto& item : mAllRitems)
+	{
+		if (item && item->Name == "mc_plateau")
+		{
+			mMCRitems.push_back(item.get());
+		}
+	}
+
+	OutputDebugStringA("MC render item created\n");
 }
 
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
@@ -3480,6 +3491,13 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		if (!mStandCustomMeshes.empty())
 			DrawCustomMeshes(mCommandList.Get(), mStandCustomMeshes);
 
+		if (mRegenerateMarching)
+		{
+			BuildMarchingCubesMesh();
+			UpdateMCRenderItem();
+
+			mRegenerateMarching = false;
+		}
 
 		// ── MC plateau (triplanar shader, same root sig as Meshes) ──────
 		if (!mMCRitems.empty())
