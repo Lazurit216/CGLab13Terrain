@@ -253,7 +253,8 @@ private:
 	BrushConstants mBrushCB;
 	TAAConstants mTAACB;
 	AtmosphereConstants mAtmosCB;
-	float sunMotionSpeed=0.5;
+	float sunMotionSpeed=0.05;
+	float sunIntensityCoof = 2.;
 
 	POINT mLastMousePos;
 
@@ -606,7 +607,8 @@ void TexColumnsApp::SetupImGui()
 	ImGui::Text("Sun");
 	ImGui::Separator();
 
-	ImGui::SliderFloat("Sun speed", &sunMotionSpeed, 0.0f, 10.0f, "%.03f");
+	ImGui::SliderFloat("Sun speed", &sunMotionSpeed, 0.0f, 10.0f, "%.01f");
+	ImGui::SliderFloat("Sun intensity coof", &sunIntensityCoof, 0.0f, 10.0f, "%.01f");
 	//ImGui::SliderFloat3("Sun Direction", &mAtmosCB.SunDirection.x, -1.0f, 1.0f);
 	//ImGui::SliderFloat("Sun Intensity", &mAtmosCB.SunIntensity, 0.0f, 20.0f);
 
@@ -1012,7 +1014,7 @@ void TexColumnsApp::UpdateAtmosphereCB(const GameTimer& gt)
 
 	if (sunHeight > 0.0f)
 	{
-		mAtmosCB.SunIntensity = 2.0f * sunHeight;
+		mAtmosCB.SunIntensity = sunIntensityCoof * sunHeight;
 	}
 	else
 	{
