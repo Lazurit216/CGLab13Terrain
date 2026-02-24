@@ -91,7 +91,7 @@ PSOut PS(VSOut pin) : SV_Target
     //pout.HistoryTexture = currentColor;
 
     // Вариант 2: показать velocity
-    //pout.BackBuffer = float4(velocity*1000.f, 0.0f, 1.0f);
+    //pout.BackBuffer = float4(velocity*100.f, .0f, 1.0f);
     //pout.HistoryTexture = pout.BackBuffer;
     
 
