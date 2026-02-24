@@ -1093,6 +1093,9 @@ void TexColumnsApp::LoadTextures()
 
 	LoadDDSTexturesFromFolder(L"../../Textures/Guard/");
 	LoadDDSTexturesFromFolder(L"../../Textures/Maxwell/");
+
+	LoadDDSTexture("default", L"../../Textures/default.dds");
+	LoadDDSTexture("default_normal", L"../../Textures/default_normal.dds");
 }
 
 
@@ -2178,15 +2181,31 @@ void TexColumnsApp::BuildCustomMeshGeometry(std::string name, UINT& meshVertexOf
 			diffuseName = diffuseName.substr(0, diffuseName.length() - 4); //file extension
 			std::cout << "DIFFUSE: " << diffuseName << "\n";
 		}
+		else
+		{
+			// Если диффузной карты нет, используем заглушку
+			diffuseName = "default";
+			std::cout << "DIFFUSE: default (using fallback)\n";
+		}
 
 		//Normal
 		std::string normalName = "";
+		bool hasNormalMap = false;
+
 		if (scene->mMaterials[k]->GetTexture(aiTextureType_NORMALS, 0, &texPath) == AI_SUCCESS ||
 			scene->mMaterials[k]->GetTexture(aiTextureType_HEIGHT, 0, &texPath) == AI_SUCCESS)
 		{
 			normalName = std::string(texPath.C_Str());
 			normalName = normalName.substr(0, normalName.length() - 4);
+			hasNormalMap = true;
 			std::cout << "NORMAL: " << normalName << "\n";
+		}
+		else
+		{
+			// !!! ЕСЛИ НОРМАЛЬНОЙ КАРТЫ НЕТ, ИСПОЛЬЗУЕМ ЗАГЛУШКУ !!!
+			normalName = "default_normal";  // Имя заглушки
+			hasNormalMap = false;
+			std::cout << "NORMAL: default_normal (using fallback)\n";
 		}
 
 		// Displacement

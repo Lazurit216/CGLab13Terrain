@@ -80,11 +80,18 @@ PSOut PS(VSOut pin) : SV_Target
     float motionFactor = saturate(motion * 100.0f);
     float adaptiveBlend = lerp(blendFactor, 1.0f, motionFactor);
     
-    // Финальный результат
-    pout.BackBuffer = lerp(historyColor, currentColor, adaptiveBlend);
-    //pout.BackBuffer = gVelocity.Sample(gsamPointClamp, pin.TexC).rgbr * 10.0f;
-    pout.HistoryTexture = pout.BackBuffer; // Обновляем историю
-    
+
+    if (length(velocity) > 0.0f)
+    {
+        pout.BackBuffer = float4(1.0f, 0.0f, 0.0f, 1.0f);
+        pout.HistoryTexture = pout.BackBuffer;
+    }
+    else
+    {
+        //default output
+        pout.BackBuffer = lerp(historyColor, currentColor, adaptiveBlend);
+        pout.HistoryTexture = pout.BackBuffer; // Обновляем историю
+    }
     // Вариант 1: показать только текущий кадр
     //pout.BackBuffer = currentColor;
     //pout.HistoryTexture = currentColor;
