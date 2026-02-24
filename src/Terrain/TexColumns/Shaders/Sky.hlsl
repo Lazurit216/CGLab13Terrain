@@ -36,7 +36,7 @@ cbuffer AtmosphereCB : register(b1)
     float SunIntensity;
 
     float3 SunColor;
-    float AtmosphereRadius;
+    float AtmosphereDensity;
 };
 
 struct VSOut
@@ -72,12 +72,19 @@ float RayleighPhase(float mu)
     return 3.0f * (1.0f + mu * mu) / (16.0f * PI);
 }
 
-float MiePhase(float mu)
+
+float MiePhase(float mu, float g)
 {
-    float g = 0.76f;
-    float denom = 1.0f + g * g - 2.0f * g * mu;
-    denom = max(denom, 0.001f); // Защита от деления на 0
-    return (1.0f - g * g) / (4.0f * PI * pow(denom, 1.5f));
+    float g2 = g * g;
+    float denom = max(1.0f + g2 - 2.0f * g * mu, 0.001f);
+    return (1.0f - g2) / (4.0f * PI * pow(denom, 1.5f));
+}
+
+float OpticalDepth(float elevation, float heightScale)
+{
+    elevation = max(elevation, 0.01f);
+    float hs = max(heightScale, 0.05f);
+    return (exp(-elevation * hs * 4.0f) + 0.08f) * AtmosphereDensity;
 }
 
 float4 PS(VSOut input) : SV_Target
@@ -85,33 +92,72 @@ float4 PS(VSOut input) : SV_Target
     float3 viewDir = normalize(input.ViewDir);
     float3 sunDir = normalize(SunDirection);
 
-    float mu = dot(viewDir, -sunDir);
-    mu = saturate(mu);
+    float mu = clamp(dot(viewDir, sunDir), -1.0f, 1.0f);
+    
+
+    float elevation = viewDir.y;
+    float sunElevation = sunDir.y;
+    
+    float optR = OpticalDepth(elevation, RayleighHeight);
+    float optM = OpticalDepth(elevation, max(MieHeight * 2.0f, 0.1f));
 
     // Фазовая функция
-    float rayleigh = RayleighPhase(mu);
-    float mie = MiePhase(mu);
-
-    // Цвет неба (Rayleigh + Mie)
-    float3 skyColor =
-        RayleighScattering * rayleigh * 0.5f +
-        MieScattering * mie * 0.5f;
-
-    // Солнечный диск (без переполнения)
-    float sunFactor = pow(saturate(mu), 64.0f);
-    float3 sunDisc = SunColor * SunIntensity * sunFactor;
-
-    // Финальный цвет (без HDR перегрузки)
-    float3 finalColor = skyColor + sunDisc;
+    float phaseR = RayleighPhase(mu);
+    float3 rayleigh = RayleighScattering * phaseR * optR;
     
-    // Тонкая настройка яркости
-    finalColor = finalColor * 0.8f;
+    float g = saturate(MieHeight);
+    float phaseM = MiePhase(mu, g);
+    float3 mie = MieScattering * phaseM * optM;
+
+    float horizonBias = 0.15f;
+    float elevAdjusted = elevation + horizonBias;
+    float elevT = saturate(elevAdjusted);
+    
+    float horizonBlend = 1.0f - pow(elevT, 0.35f); // wide, soft horizon band
+    float3 zenithColor = float3(0.04f, 0.10f, 0.38f); // deep blue at top
+    float3 horizonColor = float3(0.50f, 0.62f, 0.90f); // hazy pale blue at horizon
+    float3 skyGradient = lerp(zenithColor, horizonColor, horizonBlend);
+    
+    float sunsetT = saturate(1.0f - abs(sunElevation) * 3.5f); // 1 at horizon
+    float3 sunsetTint = float3(1.05f, 0.40f, 0.05f); // deep orange
+    skyGradient = lerp(skyGradient, sunsetTint,
+                       sunsetT * horizonBlend * 0.75f);
+    
+    // ---- Night darkening ----
+    float nightT = saturate(-sunElevation * 3.0f);
+    float3 nightSky = float3(0.005f, 0.008f, 0.020f);
+    skyGradient = lerp(skyGradient, nightSky, nightT);
+
+     // ---- Scatter contribution (sun-coloured, day-only) ----
+    float3 scatter = (rayleigh + mie) * SunColor * SunIntensity;
+    scatter *= saturate(sunElevation * 4.0f + 0.5f); // fade at sunset/night
+
+    float discThreshold = 0.998f;
+    float disc = smoothstep(discThreshold - 0.01f,
+                        discThreshold + 0.001f,
+                        mu);
+
+    float limb = pow(saturate((mu - discThreshold) / max(1.0f - discThreshold, 1e-5f)), 0.7f);
+
+    float3 solarDisc = SunColor * disc * limb * SunIntensity * 15.0f;
+
+    solarDisc *= saturate(sunElevation * 10.0f + 0.5f);
+
+    // ---- Ground fill (below horizon) ----
+    float groundT = saturate(-elevAdjusted * 5.0f);
+    float3 groundDay = float3(0.06f, 0.05f, 0.04f);
+    float3 groundSet = float3(0.18f, 0.08f, 0.02f);
+    float3 ground = lerp(groundDay, groundSet, sunsetT);
+
+    // ---- Combine ----
+    float3 final = skyGradient + scatter + solarDisc;
+    final = lerp(final, ground, groundT);
     
     float exposure = 1.2f;
-    finalColor *= exposure;
-    finalColor = finalColor / (1.0f + finalColor);
+    final *= exposure;
+    final = final / (1.0f + final);
     
-    return float4(finalColor, 1.0f);
+    return float4(max(final, 0.0f), 1.0f);
 }
 
 // Тестовый шейдер для отладки

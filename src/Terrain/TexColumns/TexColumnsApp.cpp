@@ -632,13 +632,9 @@ void TexColumnsApp::SetupImGui()
 
 	ImGui::Separator();
 
-	ImGui::Text("Debug Info");
-	ImGui::Text("Sun Dir: %.2f %.2f %.2f",
-		mAtmosCB.SunDirection.x,
-		mAtmosCB.SunDirection.y,
-		mAtmosCB.SunDirection.z);
+	ImGui::SliderFloat("Atmosphere Density ", &mAtmosCB.AtmosphereDensity, 0.0f, 4.0f);
 
-	ImGui::SetWindowPos(ImVec2(350, 220));
+	ImGui::SetWindowPos(ImVec2(900, 5));
 	ImGui::SetWindowSize(ImVec2(300, 350));
 	ImGui::End();
 }
@@ -972,8 +968,14 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 
 	mMainPassCB.AmbientLight = { 0.03f, 0.04f, 0.06f, 1.0f };
 
-	mMainPassCB.Lights[0].Direction = { 0.25f, -0.95f, 0.18f };
-	mMainPassCB.Lights[0].Strength = { 2.0f, 1.5f, 1.0f };
+	mMainPassCB.Lights[0].Direction = { -mAtmosCB.SunDirection.x, -mAtmosCB.SunDirection.y, -mAtmosCB.SunDirection.z };
+	mMainPassCB.Lights[0].Strength = {
+		mAtmosCB.SunColor.x * mAtmosCB.SunIntensity,
+		mAtmosCB.SunColor.y * mAtmosCB.SunIntensity,
+		mAtmosCB.SunColor.z * mAtmosCB.SunIntensity
+	};
+	//mMainPassCB.Lights[0].Direction = { 0.57735f, -0.57735f, 0.57735f };
+	//mMainPassCB.Lights[0].Strength = { 1.f, 1.f, 1.f };
 
 	mMainPassCB.Lights[1].Strength = { 0,0,0 };
 	mMainPassCB.Lights[2].Strength = { 0,0,0 };
@@ -987,41 +989,6 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 
 void TexColumnsApp::UpdateAtmosphereCB(const GameTimer& gt)
 {
-	//// Направление солнца (движется по кругу)
-	//static float time = 0.0f;
-	//time += gt.DeltaTime() * 0.2f;
-
-	//// Солнце движется по небу
-	//float sunX = sin(time * 0.5f) * 0.8f;
-	//float sunY = cos(time * 1.3f) * 0.5f + 0.3f;
-	//float sunZ = cos(time * 0.5f) * 0.8f;
-
-	////mAtmosCB.SunDirection = mMainPassCB.Lights[0].Direction;//XMVector3Normalize(XMVectorSet(sunX, sunY, sunZ, 0.0f));
-	////XMStoreFloat3(&mAtmosCB.SunDirection, sunDir);
-
-	//// --- Параметры солнца (безопасные значения) ---
-	//mAtmosCB.SunIntensity = 8.0f;                    // Умеренная яркость
-	//mAtmosCB.SunColor = DirectX::XMFLOAT3(1.0f, 0.9f, 0.7f); // Теплый свет
-
-	//// --- Rayleigh scattering (синее небо) ---
-	//mAtmosCB.RayleighScattering = DirectX::XMFLOAT3(
-	//	0.2f,   // R
-	//	0.4f,   // G
-	//	0.8f);  // B
-
-	//mAtmosCB.RayleighHeight = 1.0f;                  // Высота слоя
-
-	//// --- Mie scattering (пыль/дым) ---
-	//mAtmosCB.MieScattering = DirectX::XMFLOAT3(
-	//	0.1f,   // R
-	//	0.1f,   // G  
-	//	0.1f);  // B
-
-	//mAtmosCB.MieHeight = 0.2f;                       // Тонкий слой
-
-	//// --- Радиус атмосферы (не используется в простой модели) ---
-	//mAtmosCB.AtmosphereRadius = 1.0f;                 // Не влияет
-
 	auto currAtmosCB = mCurrFrameResource->AtmosphereCB.get();
 	currAtmosCB->CopyData(0, mAtmosCB);
 }

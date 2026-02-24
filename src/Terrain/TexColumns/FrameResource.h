@@ -101,24 +101,17 @@ struct AtmosphereConstants
 {             
 
 
-    DirectX::XMFLOAT3 RayleighScattering = DirectX::XMFLOAT3(
-        0.2f,   // R
-        0.4f,   // G
-        0.8f);  // B
+    DirectX::XMFLOAT3 RayleighScattering = DirectX::XMFLOAT3(0.17f, 0.37f, 0.92f); 
+    float RayleighHeight = 1.;
 
-    float RayleighHeight = 1.0f;
+    DirectX::XMFLOAT3 MieScattering = DirectX::XMFLOAT3(0.50f, 0.50f, 0.50f);
+    float MieHeight = 0.76f;
 
-    DirectX::XMFLOAT3 MieScattering = DirectX::XMFLOAT3(
-        0.1f,   // R
-        0.1f,   // G  
-        0.1f);  // B
-    float MieHeight = 0.2f;
-
-    DirectX::XMFLOAT3 SunDirection = DirectX::XMFLOAT3(0.25f, -0.95f, 0.18f); 
+    DirectX::XMFLOAT3 SunDirection = DirectX::XMFLOAT3(0.0f, 0.643f, 0.766f);
     float SunIntensity = 8.0f;
 
     DirectX::XMFLOAT3 SunColor = DirectX::XMFLOAT3(1.0f, 0.9f, 0.7f);
-    float AtmosphereRadius = 1.0f;
+    float AtmosphereDensity = 1.0f;
 };
 
 // Stores the resources needed for the CPU to build the command lists
