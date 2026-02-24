@@ -69,13 +69,13 @@ SamplerState gsamAnisotropicClamp : register(s5);
 // UV scale: how many times the texture tiles per world unit.
 // 1/64 means one full tile every 64 world units.
 // Increase for a smaller/more repeated pattern, decrease for larger tiles.
-static const float kTriplanarUVScale = 1.0f / 64.0f;
+static const float kTriplanarUVScale = 1.0f / 256.0f;
 
 // Blend sharpness: power applied to the normal weights.
 // 1.0  = very soft, gradual transition between projections.
 // 4.0  = moderate blend (recommended for rocky surfaces).
 // 16.0 = very sharp — nearly a single projection per face.
-static const float kTriplanarSharpness = 4.0f;
+static const float kTriplanarSharpness = 16.0f;
 
 struct VertexIn
 {

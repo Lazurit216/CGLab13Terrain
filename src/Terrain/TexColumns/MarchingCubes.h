@@ -419,6 +419,59 @@ struct Result
     std::vector<uint32_t> Indices;
 };
 
+
+// Вычисление сглаженных нормалей на основе вершин
+inline void ComputeSmoothNormals(Result& res)
+{
+    std::vector<XMFLOAT3> accumulatedNormals(res.Vertices.size(), { 0,0,0 });
+    std::vector<int> count(res.Vertices.size(), 0);
+
+    for (size_t i = 0; i < res.Indices.size(); i += 3)
+    {
+        uint32_t i0 = res.Indices[i];
+        uint32_t i1 = res.Indices[i + 1];
+        uint32_t i2 = res.Indices[i + 2];
+
+        // Вычисляем нормаль треугольника
+        XMVECTOR p0 = XMLoadFloat3(&res.Vertices[i0].Pos);
+        XMVECTOR p1 = XMLoadFloat3(&res.Vertices[i1].Pos);
+        XMVECTOR p2 = XMLoadFloat3(&res.Vertices[i2].Pos);
+
+        XMVECTOR e1 = XMVectorSubtract(p1, p0);
+        XMVECTOR e2 = XMVectorSubtract(p2, p0);
+        XMVECTOR n = XMVector3Cross(e1, e2); // БЕЗ нормализации здесь
+
+        // Сохраняем ненормализованный вектор для усреднения
+        XMFLOAT3 normal;
+        XMStoreFloat3(&normal, n);
+
+        accumulatedNormals[i0].x += normal.x;
+        accumulatedNormals[i0].y += normal.y;
+        accumulatedNormals[i0].z += normal.z;
+        count[i0]++;
+
+        accumulatedNormals[i1].x += normal.x;
+        accumulatedNormals[i1].y += normal.y;
+        accumulatedNormals[i1].z += normal.z;
+        count[i1]++;
+
+        accumulatedNormals[i2].x += normal.x;
+        accumulatedNormals[i2].y += normal.y;
+        accumulatedNormals[i2].z += normal.z;
+        count[i2]++;
+    }
+
+    for (size_t i = 0; i < res.Vertices.size(); ++i)
+    {
+        if (count[i] > 0)
+        {
+            XMVECTOR n = XMLoadFloat3(&accumulatedNormals[i]);
+            n = XMVector3Normalize(n);
+            XMStoreFloat3(&res.Vertices[i].Normal, n);
+        }
+    }
+}
+
 // Polygonize — runs marching cubes on the scalar field.
 // isovalue: surface threshold (default 0.5 → anything > 0.5 is inside)
 // Returns flat-shaded normals; call ComputeSmoothNormals() afterwards if preferred.
@@ -456,7 +509,7 @@ inline Result Polygonize(const ScalarField& f, float isovalue = 0.5f)
                 // Build 8-bit configuration index
                 int cubeIndex = 0;
                 for (int i = 0; i < 8; ++i)
-                    if (val[i] < isovalue) cubeIndex |= (1 << i);
+                    if (val[i] >= isovalue) cubeIndex |= (1 << i);
 
                 if (edgeTable[cubeIndex] == 0) continue;
 
@@ -474,32 +527,43 @@ inline Result Polygonize(const ScalarField& f, float isovalue = 0.5f)
                 // Emit triangles
                 for (int i = 0; triTable[cubeIndex][i] != -1; i += 3)
                 {
-                    XMFLOAT3 p0 = edgePos[triTable[cubeIndex][i + 0]];
-                    XMFLOAT3 p1 = edgePos[triTable[cubeIndex][i + 1]];
-                    XMFLOAT3 p2 = edgePos[triTable[cubeIndex][i + 2]];
+                    int e0 = triTable[cubeIndex][i + 0];
+                    int e1 = triTable[cubeIndex][i + 1];
+                    int e2 = triTable[cubeIndex][i + 2];
 
-                    // Flat normal: cross product of two edges
-                    XMVECTOR e1 = XMVectorSubtract(XMLoadFloat3(&p1), XMLoadFloat3(&p0));
-                    XMVECTOR e2 = XMVectorSubtract(XMLoadFloat3(&p2), XMLoadFloat3(&p0));
-                    XMVECTOR n = XMVector3Normalize(XMVector3Cross(e1, e2));
+                    // Получаем позиции вершин
+                    XMFLOAT3 p0 = edgePos[e0];
+                    XMFLOAT3 p1 = edgePos[e1];
+                    XMFLOAT3 p2 = edgePos[e2];
+
+                    // Вычисляем нормаль для этого треугольника
+                    XMVECTOR v0 = XMLoadFloat3(&p0);
+                    XMVECTOR v1 = XMLoadFloat3(&p1);
+                    XMVECTOR v2 = XMLoadFloat3(&p2);
+
+                    XMVECTOR e1v = XMVectorSubtract(v1, v0);
+                    XMVECTOR e2v = XMVectorSubtract(v2, v0);
+                    XMVECTOR n = XMVector3Normalize(XMVector3Cross(e1v, e2v));
                     XMFLOAT3 normal;
                     XMStoreFloat3(&normal, n);
 
+                    // Создаем три вершины
                     uint32_t baseIdx = (uint32_t)res.Vertices.size();
 
-                    // Build tangent (arbitrary vector perpendicular to normal)
-                    XMVECTOR up = fabsf(normal.y) < 0.99f
-                        ? XMVectorSet(0, 1, 0, 0)
-                        : XMVectorSet(1, 0, 0, 0);
-                    XMFLOAT3 tangent;
-                    XMStoreFloat3(&tangent, XMVector3Normalize(XMVector3Cross(up, n)));
+                    // UV координаты на основе XZ с учетом размеров поля
+                    float maxX = (f.SizeX - 1) * cs;
+                    float maxZ = (f.SizeZ - 1) * cs;
 
                     auto makeVert = [&](XMFLOAT3 p) {
                         Vertex v{};
                         v.Pos = p;
-                        v.Normal = normal;
-                        v.TexC = { p.x / (f.SizeX * cs), p.z / (f.SizeZ * cs) }; // planar XZ UV
-                        v.Tangent = tangent;
+                        v.Normal = normal; // временно, потом заменим сглаженными
+                        v.TexC = {
+                            p.x / maxX,  // U от 0 до 1 по X
+                            p.z / maxZ   // V от 0 до 1 по Z
+                        };
+                        // Тангенс - временно
+                        v.Tangent = { 1.0f, 0.0f, 0.0f };
                         res.Vertices.push_back(v);
                         };
 
@@ -508,13 +572,14 @@ inline Result Polygonize(const ScalarField& f, float isovalue = 0.5f)
                     makeVert(p2);
 
                     res.Indices.push_back(baseIdx + 0);
-                    res.Indices.push_back(baseIdx + 1);
                     res.Indices.push_back(baseIdx + 2);
+                    res.Indices.push_back(baseIdx + 1);
                 }
             }
-
+    ComputeSmoothNormals(res);
     return res;
 }
+
 // ────────────────────────────────────────────────────────────────────────────
 // Improved Perlin Noise (Perlin 2002)
 // Works at arbitrary world coordinates — truly infinite, no tiling boundary.
@@ -624,20 +689,20 @@ struct NoiseParams
     // Base frequency of the noise in world units.
     // Smaller → wider hills (lower frequency).
     // Larger  → more jagged detail (higher frequency).
-    float frequency = 0.0035f;
+    float frequency = 0.0058f;
 
     // How many octaves of fBm to layer.
     // 1 = smooth hills. 4–5 = rocky, fractured surface.
-    int octaves = 5;
+    int octaves = 1;
 
     // How tall the noise deformation is in voxels.
     // Amplitude > ~4 starts to produce overhangs and cave-like features.
-    float amplitude = 8.0f;
+    float amplitude = 16.0f;
 
     // Base plateau height in voxels from the bottom of the field.
     // Everything below (baseHeight - amplitude) is always solid.
     // Everything above (baseHeight + amplitude) is always air.
-    float baseHeight = 14.0f;
+    float baseHeight = 15.0f;
 
     // Random seed — change to get a completely different landscape.
     uint32_t seed = 42u;

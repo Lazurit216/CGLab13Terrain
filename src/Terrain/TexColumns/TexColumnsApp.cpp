@@ -587,6 +587,7 @@ void TexColumnsApp::SetupImGui()
 	ImGui::End();
 
 	// === ОКНО 3: Настройки TAA (правее первого) ===
+	/*
 	ImGui::Begin("TAA Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
 	ImGui::Text("Temporal Anti-Aliasing");
@@ -619,6 +620,7 @@ void TexColumnsApp::SetupImGui()
 	ImGui::SetWindowPos(ImVec2(350, 5));
 	ImGui::SetWindowSize(ImVec2(250, 200));
 	ImGui::End();
+	*/
 
 	// === ОКНО 4: Atmosphere Settings ===
 	ImGui::Begin("Atmosphere", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
@@ -1246,6 +1248,9 @@ void TexColumnsApp::LoadTextures()
 	LoadDDSTexture("terrainDiff", L"../../Textures/terrain_diff.dds");
 	LoadDDSTexture("terrainNorm", L"../../Textures/terrain_norm.dds");
 	LoadDDSTexture("terrainDisp", L"../../Textures/terrain_disp.dds");
+
+	LoadDDSTexture("rock_diff", L"../../Textures/rock_diff.dds");
+	LoadDDSTexture("rock_norm", L"../../Textures/rock_norm.dds");
 
 	LoadDDSTexturesFromFolder(L"../../Textures/Guard/");
 	LoadDDSTexturesFromFolder(L"../../Textures/Maxwell/");
@@ -3008,6 +3013,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 
 	// ── Run marching cubes ────────────────────────────────────────────────
 	auto mcResult = MarchingCubes::Polygonize(field, 0.5f);
+	//MarchingCubes::ComputeSmoothNormals(mcResult);
 	auto& mcVerts = mcResult.Vertices;
 	auto& mcIndices = mcResult.Indices;
 
@@ -3101,7 +3107,7 @@ void TexColumnsApp::BuildMaterials()
 	CreateMaterial("stone0", 0, TexOffsets["stoneTex"], TexOffsets["stoneNorm"], TexOffsets["stonetDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("terrain", 0, TexOffsets["terrainDiff"], TexOffsets["terrainNorm"], TexOffsets["terrainDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 
-	CreateMaterial("mc_plateau",0, TexOffsets["stoneTex"], TexOffsets["default_normal"], TexOffsets["default_height"], XMFLOAT4(0.60f, 0.55f, 0.45f, 1.0f), XMFLOAT3(0.04f, 0.04f, 0.04f), 0.8f);
+	CreateMaterial("mc_plateau",0, TexOffsets["rock_diff"], TexOffsets["rock_norm"], TexOffsets["default_height"], XMFLOAT4(0.60f, 0.55f, 0.45f, 1.0f), XMFLOAT3(0.04f, 0.04f, 0.04f), 0.8f);
 }
 
 
