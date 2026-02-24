@@ -23,12 +23,17 @@
 #include "Terrain.h"
 #include "TAATexture.h"
 
+#include "MarchingCubes.h"
+#include <DirectXTex.h>     // CPU-side DDS loading
+
+
 using Microsoft::WRL::ComPtr;
 using namespace DirectX;
 using namespace DirectX::PackedVector;
 
 #pragma comment(lib, "d3dcompiler.lib")
 #pragma comment(lib, "D3D12.lib")
+#pragma comment(lib, "DirectXTex.lib")
 
 const int gNumFrameResources = 6;
 
@@ -150,6 +155,8 @@ private:
 	void BuildCustomMeshGeometry(std::string name, UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
 	void BuildAllCustomMeshes(UINT& meshVertexOffset, UINT& meshIndexOffset, UINT& prevVertSize, UINT& prevIndSize, std::vector<Vertex>& vertices, std::vector<std::uint16_t>& indices, MeshGeometry* Geo);
 
+	void BuildMarchingCubesMesh();
+
 	void BuildRenderItems();
 	void DrawRenderItems(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& ritems);
 	void DrawCustomMeshes(ID3D12GraphicsCommandList* cmdList, const std::vector<RenderItem*>& customMeshes);
@@ -248,6 +255,7 @@ private:
 	// Render items divided by PSO.
 	std::vector<RenderItem*> mStandCustomMeshes;
 	std::vector<RenderItem*> mOpaqueRitems;
+	std::vector<RenderItem*> mMCRitems;
 
 	PassConstants mMainPassCB;
 	BrushConstants mBrushCB;
@@ -255,6 +263,9 @@ private:
 	AtmosphereConstants mAtmosCB;
 	float sunMotionSpeed=0.05;
 	float sunIntensityCoof = 2.;
+
+	MarchingCubes::NoiseParams mNoiseParams;
+	bool mRegenerateMarching = false;
 
 	POINT mLastMousePos;
 
@@ -269,6 +280,7 @@ private:
 	std::unique_ptr<Terrain> mTerrain;
 	int mMaxLOD = 5;
 	XMFLOAT3 terrainPos = XMFLOAT3(0.f, -100, 0.f);
+	XMFLOAT3 marchingPos = XMFLOAT3(-1024.f, -100, 0.f);
 	XMFLOAT3 terrainOffset = XMFLOAT3(0.f, 0.f, 0.f);
 	float mTerrainSize = 1024;
 	std::vector<Tile*> mVisibleTiles;
@@ -364,6 +376,8 @@ bool TexColumnsApp::Initialize()
 
 	BuildShapeGeometry();
 	BuildTerrainGeometry();
+
+	BuildMarchingCubesMesh();
 
 	BuildRenderItems();
 	BuildFrameResources();
@@ -496,6 +510,13 @@ void TexColumnsApp::Update(const GameTimer& gt)
 	UpdateMaterialCBs(gt);
 
 	UpdateTAA(gt);
+
+	if (mRegenerateMarching)
+	{
+		BuildMarchingCubesMesh();
+
+		mRegenerateMarching = false;
+	}
 
 	SetupImGui();
 }
@@ -639,6 +660,36 @@ void TexColumnsApp::SetupImGui()
 	ImGui::SliderFloat("Atmosphere Density ", &mAtmosCB.AtmosphereDensity, 0.0f, 4.0f);
 
 	ImGui::SetWindowPos(ImVec2(900, 5));
+	ImGui::SetWindowSize(ImVec2(300, 350));
+	ImGui::End();
+
+
+	// ОКНО 5 Marching cubes
+	ImGui::Begin("Marching Generation", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
+	ImGui::Text("Noise Parameters");
+	ImGui::Separator();
+
+	ImGui::DragFloat("World Offset X", &mNoiseParams.worldOffsetX, 1.0f, -1000.0f, 1000.0f, "%.1f");
+	ImGui::DragFloat("World Offset Z", &mNoiseParams.worldOffsetZ, 1.0f, -1000.0f, 1000.0f, "%.1f");
+
+	ImGui::DragFloat("Frequency", &mNoiseParams.frequency, 0.0001f, 0.0001f, 0.1f, "%.4f");
+	ImGui::SliderInt("Octaves", &mNoiseParams.octaves, 1, 8);
+	ImGui::DragFloat("Amplitude", &mNoiseParams.amplitude, 1.0f, 0.0f, 200.0f, "%.1f");
+	ImGui::DragFloat("Base Height", &mNoiseParams.baseHeight, 1.0f, 0.0f, 50.0f, "%.1f");
+
+	int iSeed=1234;
+	ImGui::InputInt("Seed",&iSeed);
+	mNoiseParams.seed = iSeed;
+	ImGui::Separator();
+
+	// Кнопка для регенерации
+	if (ImGui::Button("Regenerate Marching", ImVec2(200, 30)))
+	{
+		mRegenerateMarching = true;
+	}
+
+	ImGui::SetWindowPos(ImVec2(900, 350));
 	ImGui::SetWindowSize(ImVec2(300, 350));
 	ImGui::End();
 }
@@ -1195,6 +1246,7 @@ void TexColumnsApp::LoadTextures()
 
 	LoadDDSTexture("default", L"../../Textures/default.dds");
 	LoadDDSTexture("default_normal", L"../../Textures/default_normal.dds");
+	LoadDDSTexture("default_height", L"../../Textures/default_height.dds");
 }
 
 
@@ -1965,6 +2017,9 @@ void TexColumnsApp::BuildShadersAndInputLayout()
 	mShaders["skyVS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "VS", "vs_5_1");
 	mShaders["skyPS"] = d3dUtil::CompileShader(L"Shaders\\Sky.hlsl", nullptr, "PS", "ps_5_1");
 
+	mShaders["MCVS"] = d3dUtil::CompileShader(L"Shaders\\MarchingCubes.hlsl", nullptr, "VS", "vs_5_1");
+	mShaders["MCPS"] = d3dUtil::CompileShader(L"Shaders\\MarchingCubes.hlsl", nullptr, "PS", "ps_5_1");
+	mShaders["MCWirePS"] = d3dUtil::CompileShader(L"Shaders\\MarchingCubes.hlsl", nullptr, "WirePS", "ps_5_1");
 
 	mInputLayout =
 	{
@@ -2090,6 +2145,45 @@ void TexColumnsApp::BuildPSOs()
 
 		OutputDebugStringA("Creating Compute PSO...\n");
 	}
+	// PSO for Marching Cubes mesh (triplanar pixel shader)
+	{
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC mcPsoDesc;
+		ZeroMemory(&mcPsoDesc, sizeof(D3D12_GRAPHICS_PIPELINE_STATE_DESC));
+		mcPsoDesc.InputLayout = { mInputLayout.data(), (UINT)mInputLayout.size() };
+		mcPsoDesc.pRootSignature = mStandMeshRootSignature.Get(); // same root sig as Meshes
+
+		mcPsoDesc.VS = { reinterpret_cast<BYTE*>(mShaders["MCVS"]->GetBufferPointer()),
+						 mShaders["MCVS"]->GetBufferSize() };
+		mcPsoDesc.HS = { nullptr, 0 };
+		mcPsoDesc.DS = { nullptr, 0 };
+		mcPsoDesc.PS = { reinterpret_cast<BYTE*>(mShaders["MCPS"]->GetBufferPointer()),
+						 mShaders["MCPS"]->GetBufferSize() };
+
+		mcPsoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+		mcPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+		mcPsoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+		mcPsoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+		mcPsoDesc.SampleMask = UINT_MAX;
+		mcPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		mcPsoDesc.NumRenderTargets = 2;
+		mcPsoDesc.RTVFormats[0] = mBackBufferFormat;
+		mcPsoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16_FLOAT; // velocity
+		mcPsoDesc.SampleDesc.Count = m4xMsaaState ? 4 : 1;
+		mcPsoDesc.SampleDesc.Quality = m4xMsaaState ? (m4xMsaaQuality - 1) : 0;
+		mcPsoDesc.DSVFormat = mDepthStencilFormat;
+
+		ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(
+			&mcPsoDesc, IID_PPV_ARGS(&mPSOs["mc"])));
+
+		// Wireframe variant
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC mcWirePsoDesc = mcPsoDesc;
+		mcWirePsoDesc.PS = { reinterpret_cast<BYTE*>(mShaders["MCWirePS"]->GetBufferPointer()),
+							 mShaders["MCWirePS"]->GetBufferSize() };
+		mcWirePsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+		ThrowIfFailed(md3dDevice->CreateGraphicsPipelineState(
+			&mcWirePsoDesc, IID_PPV_ARGS(&mPSOs["mcWire"])));
+	}
+
 	// 2. Compute PSO
 	{
 		D3D12_COMPUTE_PIPELINE_STATE_DESC computePsoDesc;
@@ -2817,6 +2911,195 @@ void TexColumnsApp::BuildTerrainGeometry()
 	mGeometries[terrainGeo->Name] = std::move(terrainGeo);
 }
 
+void TexColumnsApp::BuildMarchingCubesMesh()
+{
+
+	//Height map
+
+	// ── 5a. Load stone_disp.dds on the CPU ───────────────────────────────────
+	// We need the raw pixel values as floats, not the GPU resource.
+	// DirectXTex::LoadFromDDSFile reads the file independently of GPU.
+
+	DirectX::ScratchImage scratchImage;
+	HRESULT hr = DirectX::LoadFromDDSFile(
+		L"../../Textures/stone_disp.dds",
+		DirectX::DDS_FLAGS_NONE,
+		nullptr,
+		scratchImage);
+
+	if (FAILED(hr))
+	{
+		OutputDebugStringA("BuildMarchingCubesMesh: Failed to load stone_disp.dds\n");
+		return;
+	}
+
+	// If the texture is block-compressed (BC1/BC4/BC5/etc.), Convert() will fail
+// because it only operates on uncompressed formats. Decompress first.
+	DirectX::ScratchImage decompressed;
+	const DirectX::Image* srcImage = scratchImage.GetImage(0, 0, 0);
+
+	if (DirectX::IsCompressed(srcImage->format))
+	{
+		hr = DirectX::Decompress(
+			*srcImage,
+			DXGI_FORMAT_R8G8B8A8_UNORM,   // intermediate uncompressed format
+			decompressed);
+
+		if (FAILED(hr))
+		{
+			OutputDebugStringA("BuildMarchingCubesMesh: Decompress failed\n");
+			return;
+		}
+		srcImage = decompressed.GetImage(0, 0, 0);
+
+		char dbg[128];
+		sprintf_s(dbg, "BuildMarchingCubesMesh: Decompressed to format %u, size %ux%u\n",
+			(UINT)srcImage->format, (UINT)srcImage->width, (UINT)srcImage->height);
+		OutputDebugStringA(dbg);
+	}
+
+	// Now convert the uncompressed image to R32_FLOAT for easy float sampling
+	DirectX::ScratchImage converted;
+	hr = DirectX::Convert(
+		*srcImage,
+		DXGI_FORMAT_R32_FLOAT,
+		DirectX::TEX_FILTER_DEFAULT,
+		DirectX::TEX_THRESHOLD_DEFAULT,
+		converted);
+
+	if (FAILED(hr))
+	{
+		OutputDebugStringA("BuildMarchingCubesMesh: Convert to R32_FLOAT failed\n");
+		return;
+	}
+
+	const DirectX::Image* img = converted.GetImage(0, 0, 0);
+	const float* data = reinterpret_cast<const float*>(img->pixels);
+	int                   texW = (int)img->width;
+	int                   texH = (int)img->height;
+
+	char dbgFmt[128];
+	sprintf_s(dbgFmt, "BuildMarchingCubesMesh: Heightmap %dx%d, format %u\n",
+		texW, texH, (UINT)img->format);
+	OutputDebugStringA(dbgFmt);
+
+//Perlin Noise
+	//MarchingCubes::NoiseParams np;
+	//np.worldOffsetX = 0.0f;     // scroll X through infinite noise
+	//np.worldOffsetZ = 0.0f;     // scroll Z through infinite noise
+	//np.frequency = 0.003f;   // ~1 hill per 333 world units
+	//np.octaves = 5;        // 5 layers: large hills + medium bumps + fine rock detail
+	//np.amplitude = 60.0f;     // ±6 voxels of vertical deformation
+	//np.baseHeight = 14.0f;    // surface sits ~14 voxels from field bottom
+	//np.seed = 1337u;    // change for a different landscape
+	// ── 5b. Voxel grid parameters ─────────────────────────────────────────────
+	//
+	//  fieldX, fieldZ: horizontal resolution of the voxel grid.
+	//                  128×128 is a good starting point — larger = more detail
+	//                  but proportionally more vertices and memory.
+	//  fieldY:         vertical cells. 48 gives ~5 solid layers at full height.
+	//  plateauScale:   max height in VOXELS. 36 out of 48 means the tallest
+	//                  point fills 75% of the Y range, leaving air above.
+	//  cellSize:       world units per voxel. 8.0 makes a 128×128 grid
+	//                  span 1024 world units — matching your terrain size.
+	//
+	const int   fieldX = 64;
+	const int   fieldY = 24;
+	const int   fieldZ = 64;
+	const float plateauScale = 18;
+	const float cellSize = 16.0f;   // → total X/Z extent = 128 * 8 = 1024
+
+	bool useHeightTexture = false;
+	MarchingCubes::ScalarField field;
+	if (useHeightTexture)
+	{
+		 field = MarchingCubes::HeightmapToScalarField(
+			data, texW, texH,
+			fieldX, fieldY, fieldZ,
+			plateauScale,
+			cellSize);
+	}
+	else
+	{
+		field = MarchingCubes::PerlinScalarField(
+			fieldX, fieldY, fieldZ, cellSize, mNoiseParams);
+	}
+
+	// ── 5c. Run marching cubes ────────────────────────────────────────────────
+	auto mcResult = MarchingCubes::Polygonize(field, 0.5f);
+	auto& mcVerts = mcResult.Vertices;
+	auto& mcIndices = mcResult.Indices;
+
+	if (mcVerts.empty())
+	{
+		OutputDebugStringA("BuildMarchingCubesMesh: MC produced no geometry\n");
+		return;
+	}
+
+	// Safety cap: if somehow the mesh is still too large, shrink it rather than crash.
+	// 2M vertices × 44 bytes = 88 MB — comfortable on any modern GPU.
+	const size_t kMaxVertices = 2'000'000;
+	if (mcVerts.size() > kMaxVertices)
+	{
+		char warn[128];
+		sprintf_s(warn, "BuildMarchingCubesMesh: WARNING — capping %zu verts to %zu\n",
+			mcVerts.size(), kMaxVertices);
+		OutputDebugStringA(warn);
+		mcVerts.resize(kMaxVertices);
+		// Re-align indices to the capped vertex buffer
+		size_t maxIdx = kMaxVertices;
+		size_t triEnd = 0;
+		for (size_t i = 0; i + 2 < mcIndices.size(); i += 3)
+			if (mcIndices[i] < maxIdx && mcIndices[i + 1] < maxIdx && mcIndices[i + 2] < maxIdx)
+				triEnd = i + 3;
+		mcIndices.resize(triEnd);
+	}
+
+	char dbgMsg[128];
+	sprintf_s(dbgMsg, "MC mesh: %zu vertices, %zu triangles\n",
+		mcVerts.size(), mcIndices.size() / 3);
+	OutputDebugStringA(dbgMsg);
+
+
+	// ── 5d. Upload to a dedicated MeshGeometry ───────────────────────────────
+	//
+	// We use uint32_t indices (R32_UINT) because MC on a 128³ grid can
+	// produce far more than 65535 vertices.
+	//
+	auto geo = std::make_unique<MeshGeometry>();
+	geo->Name = "mcGeo";
+
+	const UINT vbBytes = (UINT)(mcVerts.size() * sizeof(Vertex));
+	const UINT ibBytes = (UINT)(mcIndices.size() * sizeof(uint32_t));
+
+	ThrowIfFailed(D3DCreateBlob(vbBytes, &geo->VertexBufferCPU));
+	CopyMemory(geo->VertexBufferCPU->GetBufferPointer(), mcVerts.data(), vbBytes);
+
+	ThrowIfFailed(D3DCreateBlob(ibBytes, &geo->IndexBufferCPU));
+	CopyMemory(geo->IndexBufferCPU->GetBufferPointer(), mcIndices.data(), ibBytes);
+
+	geo->VertexBufferGPU = d3dUtil::CreateDefaultBuffer(
+		md3dDevice.Get(), mCommandList.Get(),
+		mcVerts.data(), vbBytes, geo->VertexBufferUploader);
+
+	geo->IndexBufferGPU = d3dUtil::CreateDefaultBuffer(
+		md3dDevice.Get(), mCommandList.Get(),
+		mcIndices.data(), ibBytes, geo->IndexBufferUploader);
+
+	geo->VertexByteStride = sizeof(Vertex);
+	geo->VertexBufferByteSize = vbBytes;
+	geo->IndexFormat = DXGI_FORMAT_R32_UINT;
+	geo->IndexBufferByteSize = ibBytes;
+
+	SubmeshGeometry plateau;
+	plateau.IndexCount = (UINT)mcIndices.size();
+	plateau.StartIndexLocation = 0;
+	plateau.BaseVertexLocation = 0;
+	geo->DrawArgs["plateau"] = plateau;
+
+	mGeometries["mcGeo"] = std::move(geo);
+}
+
 void TexColumnsApp::CreateMaterial(std::string _name, int _CBIndex, int _SRVDiffIndex, int _SRVNMapIndex, int _SRVDispIndex, XMFLOAT4 _DiffuseAlbedo, XMFLOAT3 _FresnelR0, float _Roughness)
 {
 
@@ -2836,6 +3119,8 @@ void TexColumnsApp::BuildMaterials()
 {
 	CreateMaterial("stone0", 0, TexOffsets["stoneTex"], TexOffsets["stoneNorm"], TexOffsets["stonetDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
 	CreateMaterial("terrain", 0, TexOffsets["terrainDiff"], TexOffsets["terrainNorm"], TexOffsets["terrainDisp"], XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f), XMFLOAT3(0.05f, 0.05f, 0.05f), 0.3f);
+
+	CreateMaterial("mc_plateau",0, TexOffsets["stoneTex"], TexOffsets["default_normal"], TexOffsets["default_height"], XMFLOAT4(0.60f, 0.55f, 0.45f, 1.0f), XMFLOAT3(0.04f, 0.04f, 0.04f), 0.8f);
 }
 
 
@@ -2883,6 +3168,31 @@ void TexColumnsApp::BuildRenderItems()
 	RenderCustomMesh("Guard", "Guard", "", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(100, 160, 100));
 	RenderCustomMesh("Guard2", "Guard", "", XMMatrixScaling(3, 3, 3), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(50, 160, 100));
 	RenderCustomMesh("maxwell", "maxwell", "", XMMatrixScaling(1., 1., 1.), XMMatrixRotationRollPitchYaw(3.14, 0, 3.14), XMMatrixTranslation(75, 100, 110));
+
+	if (mGeometries.count("mcGeo"))
+	{
+		auto mcRitem = std::make_unique<RenderItem>();
+		mcRitem->Name = "mc_plateau";
+		mcRitem->ObjCBIndex = (UINT)mAllRitems.size();
+
+		XMMATRIX mcWorld = XMMatrixTranslation(marchingPos.x, marchingPos.y, marchingPos.z);
+		XMStoreFloat4x4(&mcRitem->World, mcWorld);
+		XMStoreFloat4x4(&mcRitem->PrevWorld, mcWorld);
+		XMStoreFloat4x4(&mcRitem->TexTransform, XMMatrixIdentity());
+
+		mcRitem->Geo = mGeometries["mcGeo"].get();
+		mcRitem->Mat = mMaterials["mc_plateau"].get();
+		mcRitem->PrimitiveType = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+		mcRitem->IndexCount = mGeometries["mcGeo"]->DrawArgs["plateau"].IndexCount;
+		mcRitem->StartIndexLocation = 0;
+		mcRitem->BaseVertexLocation = 0;
+
+		mAllRitems.push_back(std::move(mcRitem));
+
+		// Goes to mMCRitems ONLY — not mStandCustomMeshes, not mOpaqueRitems.
+		// mMCRitems gets its own PSO (mc / mcWire) in Draw().
+		mMCRitems.push_back(mAllRitems.back().get());
+	}
 }
 
 void TexColumnsApp::RenderCustomMesh(std::string unique_name, std::string meshname, std::string materialName, XMMATRIX Scale, XMMATRIX Rotation, XMMATRIX Translation)
@@ -3170,6 +3480,19 @@ void TexColumnsApp::Draw(const GameTimer& gt)
 		if (!mStandCustomMeshes.empty())
 			DrawCustomMeshes(mCommandList.Get(), mStandCustomMeshes);
 
+
+		// ── MC plateau (triplanar shader, same root sig as Meshes) ──────
+		if (!mMCRitems.empty())
+		{
+			if (isFillModeSolid)
+				mCommandList->SetPipelineState(mPSOs["mc"].Get());
+			else
+				mCommandList->SetPipelineState(mPSOs["mcWire"].Get());
+
+			// Root signature is already set to mStandMeshRootSignature from
+			// the meshes pass above — no need to set it again.
+			DrawCustomMeshes(mCommandList.Get(), mMCRitems);
+		}
 
 		// Terrain
 		auto passCB = mCurrFrameResource->PassCB->Resource();
