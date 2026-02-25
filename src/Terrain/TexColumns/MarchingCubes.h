@@ -1,74 +1,158 @@
 #pragma once
-// MarchingCubes.h
-// Self-contained CPU marching cubes. No DX12 dependency — just produces
-// std::vector<Vertex> and std::vector<uint32_t> that you upload with
-// d3dUtil::CreateDefaultBuffer exactly like any other geometry.
+// MarchingCubes.h — declarations only.
+// Implementations live in MarchingCubes.cpp.
 //
-// Vertex is the same struct 
-//   XMFLOAT3 Pos, XMFLOAT3 Normal, XMFLOAT2 TexC, XMFLOAT3 Tangent
-//
-// Usage:
-//   MarchingCubes::ScalarField field(sizeX, sizeY, sizeZ);
-//   field.Set(x, y, z, value);   // value > 0.5 = solid
-//   auto [verts, indices] = MarchingCubes::Polygonize(field, 0.5f);
+// Add both files to your project. Include this header wherever you call
+// Polygonize() or PerlinScalarField().
 
 #include <vector>
-#include <array>
-#include <algorithm>
-#include <cmath>
+#include <cstdint>
 #include <DirectXMath.h>
-#include "FrameResource.h"
-using namespace DirectX;
-
-// ── forward-declare the Vertex layout to match your FrameResource.h ─────────
-// If you already have a Vertex struct in scope, remove this block.
-//#ifndef MARCHING_CUBES_VERTEX_DEFINED
-//#define MARCHING_CUBES_VERTEX_DEFINED
-//struct Vertex
-//{
-//    XMFLOAT3 Pos;
-//    XMFLOAT3 Normal;
-//    XMFLOAT2 TexC;
-//    XMFLOAT3 Tangent;
-//};
-//#endif
+#include "FrameResource.h"   // Vertex struct
 
 namespace MarchingCubes
 {
 
-// ────────────────────────────────────────────────────────────────────────────
-// Scalar field — a simple 3-D array of floats.
-// ────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// ScalarField — a 3-D array of floats.
+// Values > isovalue are "inside" (solid); values < isovalue are "outside" (air).
+// ─────────────────────────────────────────────────────────────────────────────
 struct ScalarField
 {
-    int   SizeX, SizeY, SizeZ;
-    float CellSize = 1.0f; // world-space size of one voxel
+    int   SizeX = 0, SizeY = 0, SizeZ = 0;
+    float CellSize = 1.0f;
 
-    std::vector<float> Data; // row-major [z][y][x]
+    std::vector<float> Data;
 
-    ScalarField() : SizeX(0), SizeY(0), SizeZ(0) {}
-    ScalarField(int sx, int sy, int sz, float cellSize = 1.0f)
-        : SizeX(sx), SizeY(sy), SizeZ(sz), CellSize(cellSize)
-        , Data(sx * sy * sz, 0.0f) {}
+    ScalarField() = default;
+    ScalarField(int sx, int sy, int sz, float cellSize = 1.0f);
 
-    float& At(int x, int y, int z)
-    {
-        return Data[z * SizeY * SizeX + y * SizeX + x];
-    }
-    float At(int x, int y, int z) const
-    {
-        return Data[z * SizeY * SizeX + y * SizeX + x];
-    }
-
-    // Convenience: Set(x,y,z, value)
-    void Set(int x, int y, int z, float v) { At(x, y, z) = v; }
+    float& At(int x, int y, int z);
+    float  At(int x, int y, int z) const;
+    void   Set(int x, int y, int z, float v);
 };
 
-// ────────────────────────────────────────────────────────────────────────────
-// Standard Lorensen & Cline lookup tables (1987)
-// ────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Result — output of Polygonize().
+// ─────────────────────────────────────────────────────────────────────────────
+struct Result
+{
+    std::vector<Vertex>   Vertices;
+    std::vector<uint32_t> Indices;
+};
 
-//  Vertex and edge numbering of a unit cube:
+// ─────────────────────────────────────────────────────────────────────────────
+// PerlinNoise — seeded, infinite, no tiling.
+// ─────────────────────────────────────────────────────────────────────────────
+class PerlinNoise
+{
+public:
+    explicit PerlinNoise(uint32_t seed = 42u);
+
+    // Single octave, returns [-1, 1].
+    float Noise(float x, float y, float z) const;
+
+    // Fractional Brownian Motion — stacks 'octaves' layers.
+    // Each octave doubles frequency and halves amplitude.
+    // Returns approximately [-1, 1].
+    float fBm(float x, float y, float z, float frequency, int octaves) const;
+
+private:
+    uint8_t p[512];
+
+    static float Fade(float t);
+    static float Lerp(float t, float a, float b);
+    static float Grad(int hash, float x, float y, float z);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NoiseParams — all generation parameters, passed to PerlinScalarField().
+// ─────────────────────────────────────────────────────────────────────────────
+struct NoiseParams
+{
+    // ── Surface ───────────────────────────────────────────────────────────────
+
+    // Scroll origin — moves the window into the infinite noise field.
+    float worldOffsetX = 0.0f;
+    float worldOffsetZ = 0.0f;
+
+    // Base spatial frequency. Smaller = wider hills. Larger = finer detail.
+    float frequency = 0.0058f;
+
+    // Number of fBm octaves.  1 = smooth.  5 = rocky/fractured.
+    int octaves = 1;
+
+    // Vertical deformation range in voxels.
+    float amplitude = 16.0f;
+
+    // Y level the surface sits at (before noise deformation).
+    // Must satisfy:  amplitude < baseHeight < (fieldY - amplitude).
+    float baseHeight = 15.0f;
+
+    // Seed for the surface noise.
+    uint32_t seed = 42u;
+    uint32_t caveSeed = 42u + 73856093u;
+    // ── Cave system ───────────────────────────────────────────────────────────
+
+
+    // Master toggle.
+    bool caveEnabled = true;
+
+    // Spatial frequency of the cave noise.
+    // Low  (0.04) = huge caverns.
+    // High (0.15) = narrow winding passages.
+    float caveFrequency = 0.01f;
+
+    // Tunnel radius as a fraction of the noise range.
+    // Low  (0.20) = sparse small holes.
+    // High (0.50) = large interconnected cavern network.
+    float caveThreshold = 0.8f;
+
+    // How deeply carving subtracts from terrain density.
+    // Values >= 2 cut cleanly through solid rock.
+    float caveStrength = 10.0f;
+
+    // Voxels below the surface before caves start appearing.
+    // Prevents tunnels from breaching the top surface.
+    float caveSurfaceFade = 8.0f;
+
+    // Voxels of solid bedrock protected at y = 0.
+    float caveFloorFade = 5.0f;
+
+    // Y-axis scale applied to cave noise coords.
+    // < 1 = wider-than-tall (hall-like).  > 1 = taller-than-wide (chimney-like).
+    float caveYScale = 3.f;
+    float minCaveDepth = 0.0001;
+};
+
+void ComputeSmoothNormals(Result& res);
+
+// Run Marching Cubes on the scalar field.
+// Returns flat-shaded geometry; call ComputeSmoothNormals() for smooth shading.
+Result Polygonize(const ScalarField& field, float isovalue = 0.5f);
+
+// Build a ScalarField from 3-D Perlin fBm with optional cave carving.
+// See NoiseParams for full parameter documentation.
+ScalarField PerlinScalarField(
+    int fieldX, int fieldY, int fieldZ,
+    float cellSize,
+    const NoiseParams& np = NoiseParams{});
+
+// Build a ScalarField from a CPU-side heightmap (R32_FLOAT pixels, row-major).
+// Voxels below the height curve are solid.
+ScalarField HeightmapToScalarField(
+    const float* heightData, int W, int H,
+    int fieldX, int fieldY, int fieldZ,
+    float plateauScale,
+    float cellSize = 1.0f);
+
+} // namespace MarchingCubes
+
+// =============================================================================
+// Lookup tables  (Lorensen & Cline 1987)
+// =============================================================================
+//
+//  Cube vertex and edge numbering:
 //
 //      7 ─────── 6
 //     /|         /|
@@ -78,12 +162,12 @@ struct ScalarField
 //    | /       | /
 //    0 ─────── 1
 //
-//  Edge numbering:
-//  0: 0-1  1: 1-2  2: 2-3  3: 3-0
-//  4: 4-5  5: 5-6  6: 6-7  7: 7-4
-//  8: 0-4  9: 1-5  10:2-6  11:3-7
+//  Edges:
+//  0:0-1  1:1-2  2:2-3   3:3-0
+//  4:4-5  5:5-6  6:6-7   7:7-4
+//  8:0-4  9:1-5  10:2-6  11:3-7
 
-static const int edgeTable[256] = {
+static const int kEdgeTable[256] = {
     0x0  ,0x109,0x203,0x30a,0x406,0x50f,0x605,0x70c,
     0x80c,0x905,0xa0f,0xb06,0xc0a,0xd03,0xe09,0xf00,
     0x190,0x99 ,0x393,0x29a,0x596,0x49f,0x795,0x69c,
@@ -118,8 +202,8 @@ static const int edgeTable[256] = {
     0x70c,0x605,0x50f,0x406,0x30a,0x203,0x109,0x0
 };
 
-// triTable: -1 terminates each list
-static const int triTable[256][16] = {
+// -1 terminates each triangle list
+static const int kTriTable[256][16] = {
     {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
     {0,8,3,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
     {0,1,9,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
@@ -323,8 +407,8 @@ static const int triTable[256][16] = {
     {2,5,10,2,3,5,3,7,5,-1,-1,-1,-1,-1,-1,-1},
     {8,2,0,8,5,2,8,7,5,10,2,5,-1,-1,-1,-1},
     {9,0,1,2,3,10,3,5,10,3,7,5,-1,-1,-1,-1},
-    {1,2,5,5,2,10,9,8,7,9,7,5,-1,-1,-1,-1},  // fixed
-    {5,3,7,5,1,3,5,10,1,3,1,11,-1,-1,-1,-1},  // placeholder
+    {1,2,5,5,2,10,9,8,7,9,7,5,-1,-1,-1,-1},
+    {5,3,7,5,1,3,5,10,1,3,1,11,-1,-1,-1,-1},
     {0,8,7,0,7,1,1,7,5,-1,-1,-1,-1,-1,-1,-1},
     {9,0,3,9,3,5,5,3,7,-1,-1,-1,-1,-1,-1,-1},
     {9,8,7,5,9,7,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
@@ -378,440 +462,15 @@ static const int triTable[256][16] = {
     {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}
 };
 
-// ────────────────────────────────────────────────────────────────────────────
-// Internal helpers
-// ────────────────────────────────────────────────────────────────────────────
-
-// 8 corner offsets of a unit cube (x,y,z)
-static const int vOff[8][3] = {
+// Corner offsets of a unit cube (x,y,z)
+static const int kVOff[8][3] = {
     {0,0,0},{1,0,0},{1,1,0},{0,1,0},
     {0,0,1},{1,0,1},{1,1,1},{0,1,1}
 };
 
 // Two endpoints of each of the 12 edges
-static const int eVert[12][2] = {
+static const int kEVert[12][2] = {
     {0,1},{1,2},{2,3},{3,0},
     {4,5},{5,6},{6,7},{7,4},
     {0,4},{1,5},{2,6},{3,7}
 };
-
-static inline XMFLOAT3 Lerp3(XMFLOAT3 a, XMFLOAT3 b, float t)
-{
-    return { a.x + t * (b.x - a.x), a.y + t * (b.y - a.y), a.z + t * (b.z - a.z) };
-}
-
-// Interpolate the position where the isosurface crosses an edge
-static inline XMFLOAT3 VertexInterp(float iso,
-    XMFLOAT3 p1, XMFLOAT3 p2, float v1, float v2)
-{
-    if (fabsf(v1 - v2) < 1e-6f) return p1;
-    float t = (iso - v1) / (v2 - v1);
-    return Lerp3(p1, p2, t);
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Main API
-// ────────────────────────────────────────────────────────────────────────────
-
-struct Result
-{
-    std::vector<Vertex>   Vertices;
-    std::vector<uint32_t> Indices;
-};
-
-
-// Вычисление сглаженных нормалей на основе вершин
-inline void ComputeSmoothNormals(Result& res)
-{
-    std::vector<XMFLOAT3> accumulatedNormals(res.Vertices.size(), { 0,0,0 });
-    std::vector<int> count(res.Vertices.size(), 0);
-
-    for (size_t i = 0; i < res.Indices.size(); i += 3)
-    {
-        uint32_t i0 = res.Indices[i];
-        uint32_t i1 = res.Indices[i + 1];
-        uint32_t i2 = res.Indices[i + 2];
-
-        // Вычисляем нормаль треугольника
-        XMVECTOR p0 = XMLoadFloat3(&res.Vertices[i0].Pos);
-        XMVECTOR p1 = XMLoadFloat3(&res.Vertices[i1].Pos);
-        XMVECTOR p2 = XMLoadFloat3(&res.Vertices[i2].Pos);
-
-        XMVECTOR e1 = XMVectorSubtract(p1, p0);
-        XMVECTOR e2 = XMVectorSubtract(p2, p0);
-        XMVECTOR n = XMVector3Cross(e1, e2); // БЕЗ нормализации здесь
-
-        // Сохраняем ненормализованный вектор для усреднения
-        XMFLOAT3 normal;
-        XMStoreFloat3(&normal, n);
-
-        accumulatedNormals[i0].x += normal.x;
-        accumulatedNormals[i0].y += normal.y;
-        accumulatedNormals[i0].z += normal.z;
-        count[i0]++;
-
-        accumulatedNormals[i1].x += normal.x;
-        accumulatedNormals[i1].y += normal.y;
-        accumulatedNormals[i1].z += normal.z;
-        count[i1]++;
-
-        accumulatedNormals[i2].x += normal.x;
-        accumulatedNormals[i2].y += normal.y;
-        accumulatedNormals[i2].z += normal.z;
-        count[i2]++;
-    }
-
-    for (size_t i = 0; i < res.Vertices.size(); ++i)
-    {
-        if (count[i] > 0)
-        {
-            XMVECTOR n = XMLoadFloat3(&accumulatedNormals[i]);
-            n = XMVector3Normalize(n);
-            XMStoreFloat3(&res.Vertices[i].Normal, n);
-        }
-    }
-}
-
-// Polygonize — runs marching cubes on the scalar field.
-// isovalue: surface threshold (default 0.5 → anything > 0.5 is inside)
-// Returns flat-shaded normals; call ComputeSmoothNormals() afterwards if preferred.
-inline Result Polygonize(const ScalarField& f, float isovalue = 0.5f)
-{
-    Result res;
-
-    // Pre-allocate based on surface area estimate (top face + 4 sides).
-    // Each surface cell emits at most 5 triangles × 3 flat-shaded vertices = 15.
-    // This prevents reallocation bad_alloc during push_back on large fields.
-    {
-        size_t estimatedVerts = (size_t)f.SizeX * f.SizeZ * 2 * 5 * 3;
-        res.Vertices.reserve(std::min(estimatedVerts, (size_t)2'000'000));
-        res.Indices.reserve(std::min(estimatedVerts, (size_t)2'000'000));
-    }
-
-    const float cs = f.CellSize;
-
-    for (int z = 0; z < f.SizeZ - 1; ++z)
-        for (int y = 0; y < f.SizeY - 1; ++y)
-            for (int x = 0; x < f.SizeX - 1; ++x)
-            {
-                // 8 scalar values at cube corners
-                float val[8];
-                XMFLOAT3 pos[8];
-                for (int i = 0; i < 8; ++i)
-                {
-                    int cx = x + vOff[i][0];
-                    int cy = y + vOff[i][1];
-                    int cz = z + vOff[i][2];
-                    val[i] = f.At(cx, cy, cz);
-                    pos[i] = { cx * cs, cy * cs, cz * cs };
-                }
-
-                // Build 8-bit configuration index
-                int cubeIndex = 0;
-                for (int i = 0; i < 8; ++i)
-                    if (val[i] >= isovalue) cubeIndex |= (1 << i);
-
-                if (edgeTable[cubeIndex] == 0) continue;
-
-                // Interpolate edge midpoints
-                XMFLOAT3 edgePos[12];
-                for (int e = 0; e < 12; ++e)
-                {
-                    if (edgeTable[cubeIndex] & (1 << e))
-                    {
-                        int v0 = eVert[e][0], v1 = eVert[e][1];
-                        edgePos[e] = VertexInterp(isovalue, pos[v0], pos[v1], val[v0], val[v1]);
-                    }
-                }
-
-                // Emit triangles
-                for (int i = 0; triTable[cubeIndex][i] != -1; i += 3)
-                {
-                    int e0 = triTable[cubeIndex][i + 0];
-                    int e1 = triTable[cubeIndex][i + 1];
-                    int e2 = triTable[cubeIndex][i + 2];
-
-                    // Получаем позиции вершин
-                    XMFLOAT3 p0 = edgePos[e0];
-                    XMFLOAT3 p1 = edgePos[e1];
-                    XMFLOAT3 p2 = edgePos[e2];
-
-                    // Вычисляем нормаль для этого треугольника
-                    XMVECTOR v0 = XMLoadFloat3(&p0);
-                    XMVECTOR v1 = XMLoadFloat3(&p1);
-                    XMVECTOR v2 = XMLoadFloat3(&p2);
-
-                    XMVECTOR e1v = XMVectorSubtract(v1, v0);
-                    XMVECTOR e2v = XMVectorSubtract(v2, v0);
-                    XMVECTOR n = XMVector3Normalize(XMVector3Cross(e1v, e2v));
-                    XMFLOAT3 normal;
-                    XMStoreFloat3(&normal, n);
-
-                    // Создаем три вершины
-                    uint32_t baseIdx = (uint32_t)res.Vertices.size();
-
-                    // UV координаты на основе XZ с учетом размеров поля
-                    float maxX = (f.SizeX - 1) * cs;
-                    float maxZ = (f.SizeZ - 1) * cs;
-
-                    auto makeVert = [&](XMFLOAT3 p) {
-                        Vertex v{};
-                        v.Pos = p;
-                        v.Normal = normal; // временно, потом заменим сглаженными
-                        v.TexC = {
-                            p.x / maxX,  // U от 0 до 1 по X
-                            p.z / maxZ   // V от 0 до 1 по Z
-                        };
-                        // Тангенс - временно
-                        v.Tangent = { 1.0f, 0.0f, 0.0f };
-                        res.Vertices.push_back(v);
-                        };
-
-                    makeVert(p0);
-                    makeVert(p1);
-                    makeVert(p2);
-
-                    res.Indices.push_back(baseIdx + 0);
-                    res.Indices.push_back(baseIdx + 2);
-                    res.Indices.push_back(baseIdx + 1);
-                }
-            }
-    ComputeSmoothNormals(res);
-    return res;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Improved Perlin Noise (Perlin 2002)
-// Works at arbitrary world coordinates — truly infinite, no tiling boundary.
-// ────────────────────────────────────────────────────────────────────────────
-class PerlinNoise
-{
-public:
-    // Construct with a seed. Same seed → same infinite noise field every run.
-    explicit PerlinNoise(uint32_t seed = 42u)
-    {
-        // Fill permutation table with 0..255, then shuffle with LCG
-        for (int i = 0; i < 256; ++i) p[i] = (uint8_t)i;
-
-        uint32_t lcg = seed;
-        for (int i = 255; i > 0; --i)
-        {
-            lcg = lcg * 1664525u + 1013904223u;
-            int j = (int)(lcg >> 24) % (i + 1);
-            std::swap(p[i], p[j]);
-        }
-        // Double the table to avoid index wrapping
-        for (int i = 0; i < 256; ++i) p[i + 256] = p[i];
-    }
-
-    // Single-octave Perlin noise at (x,y,z), returns [-1, 1].
-    float Noise(float x, float y, float z) const
-    {
-        // Integer cell coordinates
-        int X = (int)floorf(x) & 255;
-        int Y = (int)floorf(y) & 255;
-        int Z = (int)floorf(z) & 255;
-
-        // Fractional position within cell
-        float fx = x - floorf(x);
-        float fy = y - floorf(y);
-        float fz = z - floorf(z);
-
-        // Fade curves (quintic: 6t^5 - 15t^4 + 10t^3)
-        float u = Fade(fx), v = Fade(fy), w = Fade(fz);
-
-        // Hash corner indices
-        int A = p[X] + Y, AA = p[A] + Z, AB = p[A + 1] + Z;
-        int B = p[X + 1] + Y, BA = p[B] + Z, BB = p[B + 1] + Z;
-
-        // Interpolate gradient dot products
-        return Lerp(w,
-            Lerp(v,
-                Lerp(u, Grad(p[AA], fx, fy, fz),
-                    Grad(p[BA], fx - 1, fy, fz)),
-                Lerp(u, Grad(p[AB], fx, fy - 1, fz),
-                    Grad(p[BB], fx - 1, fy - 1, fz))),
-            Lerp(v,
-                Lerp(u, Grad(p[AA + 1], fx, fy, fz - 1),
-                    Grad(p[BA + 1], fx - 1, fy, fz - 1)),
-                Lerp(u, Grad(p[AB + 1], fx, fy - 1, fz - 1),
-                    Grad(p[BB + 1], fx - 1, fy - 1, fz - 1))));
-    }
-
-    // Fractional Brownian Motion — sums 'octaves' layers of noise.
-    // Each octave doubles frequency and halves amplitude (lacunarity=2, gain=0.5).
-    //   frequency : base frequency (higher = more detail per world unit)
-    //   octaves   : how many layers to stack (3–6 is typical)
-    //   returns   : value in approximately [-1, 1]
-    float fBm(float x, float y, float z, float frequency, int octaves) const
-    {
-        float value = 0.0f;
-        float amplitude = 1.0f;
-        float maxAmp = 0.0f;
-
-        for (int i = 0; i < octaves; ++i)
-        {
-            value += Noise(x * frequency, y * frequency, z * frequency) * amplitude;
-            maxAmp += amplitude;
-            frequency *= 2.0f;
-            amplitude *= 0.5f;
-        }
-        return value / maxAmp; // normalize to [-1, 1]
-    }
-
-private:
-    uint8_t p[512];
-
-    static float Fade(float t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-    static float Lerp(float t, float a, float b) { return a + t * (b - a); }
-
-    static float Grad(int hash, float x, float y, float z)
-    {
-        // Map the low 4 bits of the hash to 12 gradient directions
-        int  h = hash & 15;
-        float u = h < 8 ? x : y;
-        float v = h < 4 ? y : (h == 12 || h == 14 ? x : z);
-        return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
-    }
-};
-
-
-// ────────────────────────────────────────────────────────────────────────────
-// Noise parameters — pass this to PerlinScalarField().
-// ────────────────────────────────────────────────────────────────────────────
-struct NoiseParams
-{
-    // World-space position of the field's (0,0,0) corner.
-    // Change this to "scroll" through the infinite noise field.
-    float worldOffsetX = 0.0f;
-    float worldOffsetZ = 0.0f;
-
-    // Base frequency of the noise in world units.
-    // Smaller → wider hills (lower frequency).
-    // Larger  → more jagged detail (higher frequency).
-    float frequency = 0.0058f;
-
-    // How many octaves of fBm to layer.
-    // 1 = smooth hills. 4–5 = rocky, fractured surface.
-    int octaves = 1;
-
-    // How tall the noise deformation is in voxels.
-    // Amplitude > ~4 starts to produce overhangs and cave-like features.
-    float amplitude = 16.0f;
-
-    // Base plateau height in voxels from the bottom of the field.
-    // Everything below (baseHeight - amplitude) is always solid.
-    // Everything above (baseHeight + amplitude) is always air.
-    float baseHeight = 15.0f;
-
-    // Random seed — change to get a completely different landscape.
-    uint32_t seed = 42u;
-};
-
-
-// ────────────────────────────────────────────────────────────────────────────
-// PerlinScalarField — builds a ScalarField using 3D Perlin fBm.
-//
-// Density function:
-//   d(x,y,z) = baseHeight - y + amplitude * fBm(worldX, y, worldZ)
-//
-// When d > 0.5 → solid (inside rock)
-// When d < 0.5 → air
-// The noise is sampled in 3D, so it naturally produces overhangs and
-// cave-like features when amplitude is large relative to baseHeight.
-//
-// The field samples noise at world coordinates (worldOffset + i*cellSize),
-// so the result is a window into the infinite noise field. Changing
-// worldOffset scrolls through it without any visible tiling seam.
-// ────────────────────────────────────────────────────────────────────────────
-inline ScalarField PerlinScalarField(
-    int fieldX, int fieldY, int fieldZ,
-    float cellSize,
-    const NoiseParams& np = NoiseParams{})
-{
-    ScalarField field(fieldX, fieldY, fieldZ, cellSize);
-    PerlinNoise noise(np.seed);
-
-    for (int z = 0; z < fieldZ; ++z)
-        for (int x = 0; x < fieldX; ++x)
-        {
-            // World-space XZ coordinates for this column
-            float wx = np.worldOffsetX + x * cellSize;
-            float wz = np.worldOffsetZ + z * cellSize;
-
-            for (int y = 0; y < fieldY; ++y)
-            {
-                // World Y is just voxel index (noise is sampled in voxel space Y)
-                float wy = (float)y;
-
-                // 3D fBm — using world XZ and voxel Y gives a terrain that has
-                // vertical variation (overhangs) when amplitude is high enough.
-                float n = noise.fBm(wx, wy, wz, np.frequency, np.octaves);
-
-                // Density: positive = solid, negative = air.
-                // The isosurface at d=0.5 sits near y=baseHeight, deformed by noise.
-                float d = np.baseHeight - wy + n * np.amplitude;
-
-                // Clamp to [0,1] — only the narrow band around 0.5 actually matters
-                // for MC; extreme values just tell it "definitely solid/air".
-                field.Set(x, y, z, (std::max)(0.0f, std::min(1.0f, d)));
-            }
-        }
-
-    return field;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Heightmap → ScalarField conversion
-// Produces a plateau: below the heightmap surface = solid (1.0), above = air (0.0).
-//
-//   heightData  : array of W×H floats in [0,1], row-major (row = Z axis)
-//   W, H        : dimensions of the heightmap
-//   fieldY      : total number of voxels in Y (height of the box)
-//   plateauScale: how many Y voxels the maximum height maps to (≤ fieldY)
-//   cellSize    : world-space size of one voxel (same in X, Y, Z)
-// ────────────────────────────────────────────────────────────────────────────
-inline ScalarField HeightmapToScalarField(
-    const float* heightData, int W, int H,
-    int fieldX, int fieldY, int fieldZ,
-    float plateauScale,
-    float cellSize = 1.0f)
-{
-    ScalarField field(fieldX, fieldY, fieldZ, cellSize);
-
-    for (int z = 0; z < fieldZ; ++z)
-        for (int x = 0; x < fieldX; ++x)
-        {
-            // Sample heightmap with bilinear filtering
-            float fx = (float)x / (fieldX - 1) * (W - 1);
-            float fz = (float)z / (fieldZ - 1) * (H - 1);
-            int   ix = std::min((int)fx, W - 2);
-            int   iz = std::min((int)fz, H - 2);
-            float tx = fx - ix, tz = fz - iz;
-
-            float h00 = heightData[iz * W + ix];
-            float h10 = heightData[iz * W + ix + 1];
-            float h01 = heightData[(iz + 1) * W + ix];
-            float h11 = heightData[(iz + 1) * W + ix + 1];
-            float h = h00 * (1 - tx) * (1 - tz) + h10 * tx * (1 - tz)
-                + h01 * (1 - tx) * tz + h11 * tx * tz;
-
-            // Solid height in voxels (plateau cap)
-            float solidY = h * plateauScale;
-
-            for (int y = 0; y < fieldY; ++y)
-            {
-                // Smooth transition: 1 inside, 0 outside, gradient near surface
-                float dist = solidY - (float)y;
-                float density = 0.5f + dist;            // linear ramp around boundary
-                density = (std::max)(0.0f, std::min(1.0f, density));
-                field.Set(x, y, z, density);
-            }
-        }
-
-    return field;
-}
-
-
-
-} // namespace MarchingCubes

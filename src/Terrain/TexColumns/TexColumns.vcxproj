@@ -172,6 +172,7 @@
     <ClCompile Include="..\..\Common\imgui_widgets.cpp" />
     <ClCompile Include="..\..\Common\MathHelper.cpp" />
     <ClCompile Include="FrameResource.cpp" />
+    <ClCompile Include="MarchingCubes.cpp" />
     <ClCompile Include="TAATexture.cpp" />
     <ClCompile Include="Terrain.cpp" />
     <ClCompile Include="TexColumnsApp.cpp" />

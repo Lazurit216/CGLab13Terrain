@@ -69,6 +69,9 @@
     <ClCompile Include="TAATexture.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="MarchingCubes.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\Common\d3dApp.h">

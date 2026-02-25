@@ -263,13 +263,15 @@ private:
 	BrushConstants mBrushCB;
 	TAAConstants mTAACB;
 	AtmosphereConstants mAtmosCB;
-	float sunMotionSpeed=0.05;
+	float sunMotionSpeed=0.0;
 	float sunIntensityCoof = 2.;
 
 	MarchingCubes::NoiseParams mNoiseParams;
 	bool mRegenerateMarching = false;
 	bool mUseHeightTexture = false;
 	UINT mMCRenderItemIndex = -1;
+
+	float mIsovalue = 0.5f;
 
 	POINT mLastMousePos;
 
@@ -587,7 +589,7 @@ void TexColumnsApp::SetupImGui()
 	ImGui::End();
 
 	// === ОКНО 3: Настройки TAA (правее первого) ===
-	/*
+	
 	ImGui::Begin("TAA Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
 
 	ImGui::Text("Temporal Anti-Aliasing");
@@ -620,7 +622,7 @@ void TexColumnsApp::SetupImGui()
 	ImGui::SetWindowPos(ImVec2(350, 5));
 	ImGui::SetWindowSize(ImVec2(250, 200));
 	ImGui::End();
-	*/
+	
 
 	// === ОКНО 4: Atmosphere Settings ===
 	ImGui::Begin("Atmosphere", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
@@ -667,38 +669,75 @@ void TexColumnsApp::SetupImGui()
 	// ОКНО 5 Marching cubes
 
 	ImGui::Begin("Marching Generation", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+
 	if (ImGui::RadioButton("Perlin Noise", !mUseHeightTexture)) mUseHeightTexture = false;
 	ImGui::SameLine();
 	if (ImGui::RadioButton("Height texture", mUseHeightTexture)) mUseHeightTexture = true;
 
-	if(!mUseHeightTexture)
+	ImGui::SliderFloat("Isovalue", &mIsovalue, -10.f, 30.f, "%.01f");
+
+	if (!mUseHeightTexture)
 	{
-	ImGui::Text("Noise Parameters");
-	ImGui::Separator();
+		// ── Surface noise ─────────────────────────────────────────────────────
+		ImGui::SeparatorText("Surface Noise");
 
-	ImGui::DragFloat("World Offset X", &mNoiseParams.worldOffsetX, 1.0f, -1000.0f, 1000.0f, "%.1f");
-	ImGui::DragFloat("World Offset Z", &mNoiseParams.worldOffsetZ, 1.0f, -1000.0f, 1000.0f, "%.1f");
+		ImGui::DragFloat("World Offset X", &mNoiseParams.worldOffsetX, 1.0f, -10000.0f, 10000.0f, "%.1f");
+		ImGui::DragFloat("World Offset Z", &mNoiseParams.worldOffsetZ, 1.0f, -10000.0f, 10000.0f, "%.1f");
+		ImGui::DragFloat("Frequency", &mNoiseParams.frequency, 0.0001f, 0.0001f, 0.1f, "%.4f");
+		ImGui::SliderInt("Octaves", &mNoiseParams.octaves, 1, 8);
+		ImGui::DragFloat("Amplitude", &mNoiseParams.amplitude, 0.5f, 0.0f, 200.0f, "%.1f");
+		ImGui::DragFloat("Base Height", &mNoiseParams.baseHeight, 0.5f, 0.0f, 50.0f, "%.1f");
 
-	ImGui::DragFloat("Frequency", &mNoiseParams.frequency, 0.0001f, 0.0001f, 0.1f, "%.4f");
-	ImGui::SliderInt("Octaves", &mNoiseParams.octaves, 1, 8);
-	ImGui::DragFloat("Amplitude", &mNoiseParams.amplitude, 1.0f, 0.0f, 200.0f, "%.1f");
-	ImGui::DragFloat("Base Height", &mNoiseParams.baseHeight, 1.0f, 0.0f, 50.0f, "%.1f");
+		static int iSeed = 42;
+		if (ImGui::InputInt("Seed", &iSeed))
+			mNoiseParams.seed = (uint32_t)iSeed;
 
-	static int iSeed = 42;
-	ImGui::InputInt("Seed", &iSeed);
-	mNoiseParams.seed = iSeed;
-	ImGui::Separator();
+		// ── Cave system ───────────────────────────────────────────────────────
+		ImGui::SeparatorText("Cave System");
+
+		ImGui::Checkbox("Enable Caves", &mNoiseParams.caveEnabled);
+
+		if (mNoiseParams.caveEnabled)
+		{
+			ImGui::Indent(12.0f);
+
+			ImGui::DragFloat("Cave Frequency",
+				&mNoiseParams.caveFrequency,
+				0.001f, 0.01f, 0.5f, "%.3f");
+
+			ImGui::DragFloat("Cave Threshold",
+				&mNoiseParams.caveThreshold,
+				0.005f, 0.05f, 1.f, "%.3f");
+
+			ImGui::DragFloat("Cave Strength",
+				&mNoiseParams.caveStrength,
+				0.1f, 0.0f, 30.0f, "%.2f");
+
+			ImGui::DragFloat("Surface Fade",
+				&mNoiseParams.caveSurfaceFade,
+				0.1f, 0.1f, 20.0f, "%.1f");
+
+			ImGui::DragFloat("Floor Fade",
+				&mNoiseParams.caveFloorFade,
+				0.1f, 0.1f, 10.0f, "%.1f");
+
+			ImGui::DragFloat("Y Scale",
+				&mNoiseParams.caveYScale,
+				0.01f, 0.1f, 10.0f, "%.2f");
+			static int iCaveSeed = 42+ 73856093;
+			if (ImGui::InputInt("Cave Seed", &iCaveSeed))
+				mNoiseParams.caveSeed = (uint32_t)iCaveSeed;
+			ImGui::Unindent(12.0f);
+		}
 	}
 
+	ImGui::Separator();
 
-	// Кнопка для регенерации
 	if (ImGui::Button("Regenerate Marching", ImVec2(200, 30)))
-	{
 		mRegenerateMarching = true;
-	}
 
-	ImGui::SetWindowPos(ImVec2(900, 350));
-	ImGui::SetWindowSize(ImVec2(300, 350));
+	ImGui::SetWindowPos(ImVec2(550, 5));
+	ImGui::SetWindowSize(ImVec2(310, 0));   
 	ImGui::End();
 }
 
@@ -1029,7 +1068,7 @@ void TexColumnsApp::UpdateMainPassCB(const GameTimer& gt)
 	//mMainPassCB.Lights[2].Direction = { 0.0f, -0.707f, -0.707f };
 	//mMainPassCB.Lights[2].Strength = { 0.2f, 0.2f, 0.2f };
 
-	mMainPassCB.AmbientLight = { 0.03f, 0.04f, 0.06f, 1.0f };
+	mMainPassCB.AmbientLight = { 0.13f, 0.14f, 0.16f, 1.0f };
 
 	mMainPassCB.Lights[0].Direction = { -mAtmosCB.SunDirection.x, -mAtmosCB.SunDirection.y, -mAtmosCB.SunDirection.z };
 	mMainPassCB.Lights[0].Strength = {
@@ -2990,7 +3029,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 
 
 	const int   fieldX = 64;
-	const int   fieldY = 24;
+	const int   fieldY = 48;
 	const int   fieldZ = 64;
 	const float plateauScale = 18;
 	const float cellSize = 16.0f;   // → total X/Z extent = 128 * 8 = 1024
@@ -3012,7 +3051,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 	}
 
 	// ── Run marching cubes ────────────────────────────────────────────────
-	auto mcResult = MarchingCubes::Polygonize(field, 0.5f);
+	auto mcResult = MarchingCubes::Polygonize(field, mIsovalue);
 	//MarchingCubes::ComputeSmoothNormals(mcResult);
 	auto& mcVerts = mcResult.Vertices;
 	auto& mcIndices = mcResult.Indices;
@@ -3049,10 +3088,7 @@ void TexColumnsApp::BuildMarchingCubesMesh()
 
 
 	// ── Upload to a dedicated MeshGeometry ───────────────────────────────
-	//
-	// We use uint32_t indices (R32_UINT) because MC on a 128³ grid can
-	// produce far more than 65535 vertices.
-	//
+
 	auto geo = std::make_unique<MeshGeometry>();
 	geo->Name = "mcGeo";
 

@@ -136,20 +136,13 @@ float4 TriplanarDiffuse(float3 posW, float3 weights)
 {
     float s = kTriplanarUVScale;
 
-    float4 cx = gDiffuseMap.Sample(gsamAnisotropicWrap, posW.yz * s); // YZ plane (X-facing)
-    float4 cy = gDiffuseMap.Sample(gsamAnisotropicWrap, posW.xz * s); // XZ plane (Y-facing)
-    float4 cz = gDiffuseMap.Sample(gsamAnisotropicWrap, posW.xy * s); // XY plane (Z-facing)
+    float4 cx = gDiffuseMap.Sample(gsamAnisotropicWrap, posW.yz * s); 
+    float4 cy = gDiffuseMap.Sample(gsamAnisotropicWrap, posW.xz * s);
+    float4 cz = gDiffuseMap.Sample(gsamAnisotropicWrap, posW.xy * s); 
 
     return cx * weights.x + cy * weights.y + cz * weights.z;
 }
 
-// Triplanar normal map sample — "Whiteout" blend method.
-// Each sample gives a tangent-space normal; we rotate each into world space
-// based on which projection it came from before blending.
-//
-// Whiteout blend: the Z component of each tangent normal becomes the
-// blend weight axis. This avoids the "creases" that appear with naive
-// linear blending of normal vectors.
 float3 TriplanarNormal(float3 posW, float3 normalW, float3 weights)
 {
     float s = kTriplanarUVScale;
