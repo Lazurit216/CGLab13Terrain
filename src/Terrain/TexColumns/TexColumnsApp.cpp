@@ -736,7 +736,7 @@ void TexColumnsApp::SetupImGui()
 	if (ImGui::Button("Regenerate Marching", ImVec2(200, 30)))
 		mRegenerateMarching = true;
 
-	ImGui::SetWindowPos(ImVec2(550, 5));
+	//ImGui::SetWindowPos(ImVec2(550, 5));
 	ImGui::SetWindowSize(ImVec2(310, 0));   
 	ImGui::End();
 }
